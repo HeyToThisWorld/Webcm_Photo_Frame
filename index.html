@@ -136,6 +136,7 @@
 
   <div id="chrome">
     <div class="row">
+      <button class="iconbtn" id="addBtn" title="Add camera">&#43;</button>
       <button class="iconbtn" id="pauseBtn" title="Pause">&#10073;&#10073;</button>
       <button class="iconbtn" id="skipBtn" title="Skip">&#9654;&#9654;</button>
       <button class="iconbtn" id="settingsBtn" title="Settings">&#9881;</button>
@@ -185,18 +186,8 @@
     </div>
     <div class="field">
       <label>Time zone (IANA name &mdash; e.g. Asia/Tokyo, America/Denver, Africa/Nairobi)</label>
-      <input id="f_tz" list="tzlist" placeholder="filled in automatically when possible">
-      <datalist id="tzlist">
-        <option value="America/New_York"><option value="America/Chicago">
-        <option value="America/Denver"><option value="America/Los_Angeles">
-        <option value="America/Anchorage"><option value="Pacific/Honolulu">
-        <option value="Europe/London"><option value="Europe/Paris">
-        <option value="Africa/Nairobi"><option value="Africa/Johannesburg">
-        <option value="Asia/Tokyo"><option value="Asia/Kolkata">
-        <option value="Asia/Bangkok"><option value="Australia/Sydney">
-        <option value="Pacific/Auckland"><option value="America/Sao_Paulo">
-        <option value="America/Santiago"><option value="Asia/Dubai">
-      </datalist>
+      <input id="f_tz" list="tzlist" placeholder="filled in automatically when possible &mdash; or type to search">
+      <datalist id="tzlist"></datalist>
     </div>
     <div class="status err" id="formErr"></div>
     <div class="formActions">
@@ -282,6 +273,28 @@
   function validTimeZone(tz){
     try{ new Intl.DateTimeFormat("en-US", {timeZone: tz}); return true; }
     catch(e){ return false; }
+  }
+
+  // Full IANA list via the browser's own built-in data (Safari 15.4+,
+  // so this is safe on any iPad running the Wake Lock API too).
+  // Falls back to a short curated list on anything older.
+  var FALLBACK_TZ = ["America/New_York","America/Chicago","America/Denver","America/Los_Angeles",
+    "America/Anchorage","Pacific/Honolulu","Europe/London","Europe/Paris","Africa/Nairobi",
+    "Africa/Johannesburg","Asia/Tokyo","Asia/Kolkata","Asia/Bangkok","Australia/Sydney",
+    "Pacific/Auckland","America/Sao_Paulo","America/Santiago","Asia/Dubai"];
+
+  function populateTimezoneList(){
+    var list;
+    try{ list = (typeof Intl.supportedValuesOf === "function") ? Intl.supportedValuesOf("timeZone") : FALLBACK_TZ; }
+    catch(e){ list = FALLBACK_TZ; }
+    var dl = document.getElementById("tzlist");
+    var frag = document.createDocumentFragment();
+    list.forEach(function(tz){
+      var opt = document.createElement("option");
+      opt.value = tz;
+      frag.appendChild(opt);
+    });
+    dl.appendChild(frag);
   }
 
   function fetchTimeout(url, ms){
@@ -603,6 +616,7 @@
   function closePanel(){ el.panel.classList.remove("open"); }
   document.getElementById("settingsBtn").addEventListener("click", openPanel);
   document.getElementById("emptyAddBtn").addEventListener("click", openPanel);
+  document.getElementById("addBtn").addEventListener("click", function(){ resetForm(); openPanel(); });
   document.getElementById("closePanelBtn").addEventListener("click", closePanel);
 
   function resetForm(){
@@ -701,6 +715,7 @@
 
   // ---------- boot ----------
   load();
+  populateTimezoneList();
   refreshRotationUI();
   setInterval(updateClock, 1000);
   requestWakeLock();
