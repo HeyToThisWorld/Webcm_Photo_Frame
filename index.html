@@ -33,16 +33,41 @@
   .serif{ font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, Times, serif; }
 
   #stage{ position:fixed; inset:0; background:#000; }
-  #mediaLayer{ position:absolute; inset:0; }
+  #mediaLayer{ position:absolute; inset:0; z-index:1; }
   #mediaLayer video, #mediaLayer img, #mediaLayer iframe{
     width:100%; height:100%; object-fit:cover; border:0; display:block; background:#000;
   }
+  /* Sits above the media so taps always reach our own page, never an
+     embedded video's own iframe document (which would otherwise swallow
+     every tap silently -- that was bug #1). */
+  #tapCatcher{ position:absolute; inset:0; z-index:5; background:transparent; }
 
-  #progress{
-    position:fixed; top:0; left:0; height:3px; width:0%;
-    background:var(--accent); z-index:30;
-    padding-top:env(safe-area-inset-top,0px);
+  #mediaLoading{
+    position:absolute; inset:0; z-index:8;
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    color:var(--ink-dim); font-size:14px; pointer-events:none;
+    opacity:0; transition:opacity .2s ease;
   }
+  #mediaLoading.show{ opacity:1; }
+  #mediaLoading .spin{
+    width:16px; height:16px; border-radius:50%;
+    border:2px solid var(--line); border-top-color:var(--accent);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  #mediaMsg{
+    position:absolute; left:16px; right:16px; top:calc(16px + env(safe-area-inset-top,0px)); z-index:9;
+    text-align:center; font-size:13px; color:var(--ink-dim);
+    background:rgba(10,10,8,.72); border-radius:var(--radius); padding:9px 14px;
+    opacity:0; pointer-events:none; transition:opacity .3s ease;
+  }
+  #mediaMsg.show{ opacity:1; }
+
+  /* Rotation timer -- lives inside the overlay card now, not pinned to the
+     top edge of the screen, so it can't be mistaken for the browser's own
+     page-loading bar (that was the "orange stripe" confusion). */
+  #progress{ height:3px; width:0%; background:var(--accent); border-radius:2px; margin-bottom:16px; }
 
   #overlay{
     position:fixed; left:0; right:0; bottom:0; z-index:20;
@@ -136,10 +161,15 @@
 </head>
 <body>
 
-  <div id="stage"><div id="mediaLayer"></div></div>
-  <div id="progress"></div>
+  <div id="stage">
+    <div id="mediaLayer"></div>
+    <div id="tapCatcher"></div>
+    <div id="mediaLoading"><div class="spin"></div><span>Loading&hellip;</span></div>
+    <div id="mediaMsg"></div>
+  </div>
 
   <div id="overlay" style="display:none;">
+    <div id="progress"></div>
     <div class="place serif" id="ovPlace"></div>
     <div class="region" id="ovRegion"></div>
     <div class="clock"><b id="ovTime"></b> &nbsp;&middot;&nbsp; <span id="ovDate"></span></div>
@@ -170,7 +200,7 @@
     <h3 id="formTitle">Add a camera</h3>
 
     <div class="field">
-      <label>Stream URL &mdash; paste it here (any site: YouTube, Vimeo, a park's own webcam page, a direct video or image link)</label>
+      <label>Stream URL &mdash; a direct video/image file works best (.m3u8, .mp4, or a refreshing .jpg); for a webcam page, use that site's own "embed" or "share" link if it has one &mdash; most webcam sites block their plain page link from being shown elsewhere</label>
       <div class="urlRow">
         <input id="f_url" type="url" placeholder="https://...">
         <button class="btn small" id="fetchBtn" style="white-space:nowrap;">Fetch details</button>
@@ -235,6 +265,8 @@
 
   var el = {
     mediaLayer: document.getElementById("mediaLayer"),
+    mediaLoading: document.getElementById("mediaLoading"),
+    mediaMsg: document.getElementById("mediaMsg"),
     progress: document.getElementById("progress"),
     overlay: document.getElementById("overlay"),
     ovPlace: document.getElementById("ovPlace"),
@@ -457,7 +489,17 @@
       var r = await fetchTimeout("https://www.youtube.com/oembed?url=" + encodeURIComponent(url) + "&format=json", 6000);
       if(!r.ok) return null;
       var j = await r.json();
-      return j.title || null;
+      // A pasted "/@channel/live" URL has no video id in it at all -- the
+      // regex parse in youTubeId() can't find one. oEmbed resolves the
+      // *actual* live video server-side regardless of URL shape, and its
+      // thumbnail_url always embeds that resolved id (".../vi/ID/..."),
+      // so we pull the id from there instead of trusting the pasted URL.
+      var id = null;
+      if(j.thumbnail_url){
+        var m = j.thumbnail_url.match(/\/vi\/([\w-]+)\//);
+        if(m) id = m[1];
+      }
+      return { title: j.title || null, id: id };
     }catch(e){ return null; }
   }
 
@@ -470,6 +512,24 @@
     }catch(e){ return null; }
   }
 
+  // Most public webcam PAGES (EarthCam, SkylineWebcams, Windy, a tourism
+  // board's own site, etc.) block being framed elsewhere -- that's a header
+  // the site itself sets, not something any app can override. But the raw
+  // video/image file the page displays often has no such restriction. So:
+  // scan the page's extracted text/markup for a direct .m3u8/.mp4/image URL
+  // and use that instead of the page URL when we can find one. Best-effort --
+  // it only works if that URL appears in the fetched text at all.
+  function sniffStreamUrl(text){
+    var m3u8 = text.match(/https?:\/\/[^\s"'<>)]+\.m3u8[^\s"'<>)]*/i);
+    if(m3u8) return { url: m3u8[0], type: "video" };
+    var mp4 = text.match(/https?:\/\/[^\s"'<>)]+\.(?:mp4|mov|webm)[^\s"'<>)]*/i);
+    if(mp4) return { url: mp4[0], type: "video" };
+    var imgs = text.match(/https?:\/\/[^\s"'<>)]+\.(?:jpg|jpeg|png)[^\s"'<>)]*/ig) || [];
+    var goodImg = imgs.find(function(u){ return !/logo|icon|sprite|avatar|banner|thumb|favicon/i.test(u); });
+    if(goodImg) return { url: goodImg, type: "image" };
+    return null;
+  }
+
   // Generic fallback for any other host, via a public read-only page-reader
   // (r.jina.ai). This is a third-party relay: it can be slow, rate-limited,
   // or unavailable, and it sees the URL you paste. If it fails, we just move on.
@@ -479,10 +539,12 @@
       if(!r.ok) return null;
       var text = await r.text();
       var lines = text.split("\n").map(function(l){ return l.trim(); }).filter(Boolean);
+      var title = null;
       for(var i=0;i<lines.length;i++){
-        if(/^title:/i.test(lines[i])) return lines[i].replace(/^title:/i,"").trim().slice(0,120);
+        if(/^title:/i.test(lines[i])){ title = lines[i].replace(/^title:/i,"").trim().slice(0,120); break; }
       }
-      return lines.length ? lines[0].replace(/^#+\s*/,"").slice(0,120) : null;
+      if(!title && lines.length) title = lines[0].replace(/^#+\s*/,"").slice(0,120);
+      return { title: title, stream: sniffStreamUrl(text) };
     }catch(e){ return null; }
   }
 
@@ -606,6 +668,8 @@
     el.fetchStatus.textContent = msg;
   }
 
+  var lastYtId = null, lastYtUrl = null;
+
   async function runDetection(){
     var url = el.f_url.value.trim();
     if(!url){ setStatus("Paste a URL first.", "err"); return; }
@@ -614,9 +678,17 @@
 
     var type = guessType(url);
     var title = null;
-    if(type === "youtube") title = await detectYouTube(url);
+    var sniffed = null;
+    if(type === "youtube"){
+      var yt = await detectYouTube(url);
+      if(yt){ title = yt.title; lastYtId = yt.id; lastYtUrl = url; }
+      else { lastYtId = null; lastYtUrl = null; }
+    }
     else if(/vimeo\.com/i.test(url)) title = await detectVimeo(url);
-    else title = await detectGeneric(url);
+    else {
+      var g = await detectGeneric(url);
+      if(g){ title = g.title; sniffed = g.stream; }
+    }
 
     var geo = null;
     if(title) geo = await geocode(title);
@@ -627,12 +699,21 @@
     var tz = geo ? estimateTimezone(geo.lat, geo.lon, geo.country) : null;
     if(tz) el.f_tz.value = tz;
 
+    var swapped = false;
+    if(sniffed && sniffed.url !== url){
+      el.f_url.value = sniffed.url;
+      el.f_type.value = sniffed.type;
+      swapped = true;
+    }
+
     el.fetchBtn.disabled = false;
     var found = [];
     if(title) found.push("name"); if(geo && geo.place) found.push("place"); if(tz) found.push("time zone");
-    if(found.length === 3) setStatus("Found name, place and time zone. Check them, then save.", "ok");
-    else if(found.length) setStatus("Found " + found.join(", ") + ". Fill in the rest by hand.", "ok");
-    else setStatus("Couldn't detect anything for this link \u2014 fill in the fields below by hand.", "err");
+    var prefix = swapped ? "This page can't be embedded directly, but found a direct stream link inside it and switched to that \u2014 double-check it's the right camera. " : "";
+    if(found.length === 3) setStatus(prefix + "Found name, place and time zone. Check them, then save.", "ok");
+    else if(found.length) setStatus(prefix + "Found " + found.join(", ") + ". Fill in the rest by hand.", "ok");
+    else if(swapped) setStatus(prefix + "Fill in the rest by hand.", "ok");
+    else setStatus("Couldn't detect anything for this link \u2014 if it's a webcam PAGE rather than a direct video/image file, look for that site's own \u201cembed\u201d or \u201cshare\u201d link instead, and paste that.", "err");
   }
 
   el.fetchBtn.addEventListener("click", runDetection);
@@ -641,31 +722,64 @@
   });
 
   // ---------- media rendering ----------
+  var loadingHideTimer = null;
+  var mediaMsgTimer = null;
+  function showMediaLoading(){ el.mediaLoading.classList.add("show"); }
+  function hideMediaLoading(){ el.mediaLoading.classList.remove("show"); clearTimeout(loadingHideTimer); }
+  function showMediaMsg(text){ el.mediaMsg.textContent = text; el.mediaMsg.classList.add("show"); }
+  function hideMediaMsg(){ el.mediaMsg.classList.remove("show"); }
+
   function clearMedia(){
     if(imageRefreshTimer){ clearInterval(imageRefreshTimer); imageRefreshTimer = null; }
+    clearTimeout(mediaMsgTimer); mediaMsgTimer = null;
+    hideMediaMsg();
     el.mediaLayer.innerHTML = "";
   }
 
   function renderCam(cam){
     clearMedia();
+    showMediaLoading();
+    clearTimeout(loadingHideTimer);
+    loadingHideTimer = setTimeout(hideMediaLoading, 8000); // never gets stuck, even if a "ready" event never fires
     var type = cam.type === "auto" ? guessType(cam.url) : cam.type;
 
     if(type === "youtube"){
-      var id = youTubeId(cam.url);
+      // Prefer the id resolved via oEmbed at save time (cam.ytid) over
+      // re-parsing the pasted URL: a "/@channel/live" link has no id in
+      // its own path, so youTubeId() alone would return null for it and
+      // we'd wrongly try to iframe the non-embeddable watch page.
+      var id = cam.ytid || youTubeId(cam.url);
       var iframe = document.createElement("iframe");
       iframe.src = id
         ? "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0&loop=1&playlist=" + id
         : cam.url;
       iframe.allow = "autoplay; encrypted-media; picture-in-picture";
       iframe.setAttribute("allowfullscreen", "");
+      iframe.addEventListener("load", hideMediaLoading, {once:true});
       el.mediaLayer.appendChild(iframe);
+      // A blocked/failed embed still fires "load" in most browsers, so this
+      // can't be a definite error -- it's an honest, hedged hint only.
+      mediaMsgTimer = setTimeout(function(){
+        showMediaMsg("If nothing is showing above, re-open Settings and use \u201cFetch details\u201d again, or try the direct video link instead of a channel page.");
+      }, 9000);
     } else if(type === "video"){
       var video = document.createElement("video");
       video.src = cam.url; video.muted = true; video.autoplay = true; video.playsInline = true; video.loop = true;
+      video.preload = "auto";
+      video.addEventListener("loadeddata", hideMediaLoading, {once:true});
+      video.addEventListener("error", function(){
+        hideMediaLoading();
+        showMediaMsg("Couldn't load this video \u2014 check the link or source type in Settings.");
+      }, {once:true});
       video.play().catch(function(){});
       el.mediaLayer.appendChild(video);
     } else if(type === "image"){
       var img = document.createElement("img");
+      img.addEventListener("load", hideMediaLoading, {once:true});
+      img.addEventListener("error", function(){
+        hideMediaLoading();
+        showMediaMsg("Couldn't load this image \u2014 check the link in Settings.");
+      }, {once:true});
       img.src = cam.url + (cam.url.indexOf("?") === -1 ? "?" : "&") + "t=" + Date.now();
       el.mediaLayer.appendChild(img);
       imageRefreshTimer = setInterval(function(){
@@ -675,7 +789,11 @@
       var gen = document.createElement("iframe");
       gen.src = cam.url;
       gen.allow = "autoplay; encrypted-media; picture-in-picture";
+      gen.addEventListener("load", hideMediaLoading, {once:true});
       el.mediaLayer.appendChild(gen);
+      mediaMsgTimer = setTimeout(function(){
+        showMediaMsg("If nothing is showing above, this site may not allow embedding \u2014 edit or remove it in Settings.");
+      }, 9000);
     }
   }
 
@@ -771,6 +889,7 @@
     el.f_name.value = ""; el.f_place.value = ""; el.f_url.value = "";
     el.f_type.value = "auto"; el.f_minutes.value = "5"; el.f_tz.value = "";
     el.formErr.textContent = ""; setStatus("", ""); hideTzSuggest();
+    lastYtId = null; lastYtUrl = null;
   }
   document.getElementById("cancelEditBtn").addEventListener("click", resetForm);
 
@@ -837,11 +956,15 @@
     if(!minutes || minutes < 1) minutes = 5;
     el.formErr.textContent = "";
 
+    var ytid = (lastYtId && lastYtUrl === url) ? lastYtId : null;
+
     if(editingId){
       var cam = cams.find(function(c){ return c.id === editingId; });
+      var urlChanged = cam.url !== url;
       cam.name = name; cam.place = place; cam.url = url; cam.type = type; cam.minutes = minutes; cam.tz = tz;
+      cam.ytid = urlChanged ? ytid : (ytid || cam.ytid || null);
     } else {
-      cams.push({ id: uid(), name: name, place: place, url: url, type: type, minutes: minutes, tz: tz });
+      cams.push({ id: uid(), name: name, place: place, url: url, type: type, minutes: minutes, tz: tz, ytid: ytid });
     }
     save(); resetForm(); renderCamList(); refreshRotationUI();
   });
