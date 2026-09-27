@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Park Frame</title>
+<style>
+  :root{
+    --bg:#060605;
+    --ink:#F2ECDD;
+    --ink-dim:#AEB8AC;
+    --accent:#C08A46;
+    --danger:#C1503D;
+    --ok:#7FA06B;
+    --panel:#0E100D;
+    --line:rgba(242,236,221,.14);
+    --radius:3px;
+    font-variant-numeric: tabular-nums;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    height:100%;
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system, system-ui, "Helvetica Neue", Arial, sans-serif;
+    overflow:hidden;
+    -webkit-user-select:none; user-select:none;
+  }
+  .serif{ font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, Times, serif; }
+
+  #stage{ position:fixed; inset:0; background:#000; }
+  #mediaLayer{ position:absolute; inset:0; z-index:1; }
+  #mediaLayer video, #mediaLayer img, #mediaLayer iframe{
+    width:100%; height:100%; object-fit:cover; border:0; display:block; background:#000;
+  }
+  /* Sits above the media so taps always reach our own page, never an
+     embedded video's own iframe document (which would otherwise swallow
+     every tap silently -- that was bug #1). */
+  #tapCatcher{ position:absolute; inset:0; z-index:5; background:transparent; }
+
+  #mediaLoading{
+    position:absolute; inset:0; z-index:8;
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    color:var(--ink-dim); font-size:14px; pointer-events:none;
+    opacity:0; transition:opacity .2s ease;
+  }
+  #mediaLoading.show{ opacity:1; }
+  #mediaLoading .spin{
+    width:16px; height:16px; border-radius:50%;
+    border:2px solid var(--line); border-top-color:var(--accent);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  #mediaMsg{
+    position:absolute; left:16px; right:16px; top:calc(16px + env(safe-area-inset-top,0px)); z-index:9;
+    text-align:center; font-size:13px; color:var(--ink-dim);
+    background:rgba(10,10,8,.72); border-radius:var(--radius); padding:9px 14px;
+    opacity:0; pointer-events:none; transition:opacity .3s ease;
+  }
+  #mediaMsg.show{ opacity:1; }
+
+  /* Rotation timer -- lives inside the overlay card now, not pinned to the
+     top edge of the screen, so it can't be mistaken for the browser's own
+     page-loading bar (that was the "orange stripe" confusion). */
+  #progress{ height:3px; width:0%; background:var(--accent); border-radius:2px; margin-bottom:16px; }
+
+  #overlay{
+    position:fixed; left:0; right:0; bottom:0; z-index:20;
+    padding:28px 32px calc(24px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,.45) 55%, transparent);
+    pointer-events:none; transition:opacity .4s ease;
+  }
+  #overlay .place{ font-size:34px; line-height:1.15; font-weight:600; }
+  #overlay .region{ font-size:16px; color:var(--ink-dim); margin-top:4px; }
+  #overlay .clock{ margin-top:14px; font-size:15px; color:var(--ink-dim); letter-spacing:.2px; }
+  #overlay .clock b{ color:var(--ink); font-weight:600; }
+  #overlay .count{ position:absolute; right:32px; bottom:calc(24px + env(safe-area-inset-bottom,0px)); font-size:13px; color:var(--ink-dim); }
+
+  #empty{
+    position:fixed; inset:0; z-index:25;
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column; text-align:center; gap:14px; padding:24px;
+  }
+  #empty h1{ font-size:28px; font-weight:600; margin:0; }
+  #empty p{ margin:0; color:var(--ink-dim); font-size:15px; max-width:360px; }
+  #empty.hidden{ display:none; }
+
+  button{ font-family:inherit; cursor:pointer; border:0; border-radius:var(--radius); }
+  .btn{ background:var(--accent); color:#100C06; font-size:15px; font-weight:600; padding:12px 20px; }
+  .btn.secondary{ background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .btn.small{ padding:9px 14px; font-size:13px; }
+
+  #chrome{ position:fixed; inset:0; z-index:40; pointer-events:none; }
+  #chrome .row{
+    position:fixed; top:0; right:0; display:flex; gap:10px;
+    padding:calc(16px + env(safe-area-inset-top,0px)) 16px 0 0;
+    opacity:0; transition:opacity .3s ease; pointer-events:none;
+  }
+  #chrome.show .row{ opacity:1; pointer-events:auto; }
+  .iconbtn{
+    width:44px; height:44px; border-radius:50%;
+    background:rgba(10,10,8,.65); color:var(--ink);
+    display:flex; align-items:center; justify-content:center; font-size:18px;
+  }
+
+  #panel{
+    position:fixed; inset:0; z-index:50; background:var(--panel);
+    transform:translateY(100%); transition:transform .35s ease;
+    overflow-y:auto; -webkit-user-select:text; user-select:text;
+    padding: calc(20px + env(safe-area-inset-top,0px)) 20px calc(40px + env(safe-area-inset-bottom,0px));
+  }
+  #panel.open{ transform:translateY(0); }
+  #panel h2{ font-size:22px; margin:0 0 18px; }
+  #panel h3{ font-size:14px; color:var(--ink-dim); font-weight:600; margin:28px 0 12px; }
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px; }
+  .field input, .field select{
+    width:100%; padding:11px 12px; font-size:15px; font-family:inherit;
+    background:#181A15; color:var(--ink); border:1px solid var(--line); border-radius:var(--radius);
+  }
+  .urlRow{ display:flex; gap:8px; align-items:flex-start; }
+  .urlRow .field{ flex:1; }
+  .tzWrap{ position:relative; }
+  .tzWrap input{ padding-right:38px; }
+  .tzClear{
+    position:absolute; right:6px; top:9px;
+    width:28px; height:28px; border-radius:50%; background:transparent; color:var(--ink-dim);
+    font-size:19px; line-height:1; display:flex; align-items:center; justify-content:center;
+  }
+  .tzClear:active{ background:var(--line); }
+  .tzSuggest{
+    position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:5;
+    background:#181A15; border:1px solid var(--line); border-radius:var(--radius);
+    max-height:240px; overflow-y:auto; display:none;
+  }
+  .tzSuggest.show{ display:block; }
+  .tzOpt{ padding:11px 12px; font-size:14px; border-bottom:1px solid var(--line); }
+  .tzOpt:last-child{ border-bottom:0; }
+  .tzOpt:active{ background:var(--line); }
+  .tzSuggest .empty{ padding:11px 12px; font-size:13px; color:var(--ink-dim); }
+  .streamPicker{ display:none; margin:2px 0 10px; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+  .streamPicker.show{ display:block; }
+  .streamPicker .tzOpt{ cursor:pointer; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .status{ font-size:13px; margin:6px 0 4px; min-height:16px; }
+  .status.err{ color:var(--danger); }
+  .status.ok{ color:var(--ok); }
+  .status.busy{ color:var(--ink-dim); }
+  .formActions{ display:flex; gap:10px; margin-top:10px; }
+
+  .camrow{ display:flex; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .camrow .meta{ flex:1; min-width:0; }
+  .camrow .meta .n{ font-weight:600; font-size:15px; }
+  .camrow .meta .p{ font-size:13px; color:var(--ink-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .camrow .actions{ display:flex; gap:6px; flex-shrink:0; }
+  .smallbtn{ background:transparent; color:var(--ink-dim); border:1px solid var(--line); border-radius:var(--radius); padding:7px 10px; font-size:13px; }
+  .closeRow{ display:flex; justify-content:space-between; align-items:center; }
+</style>
+</head>
+<body>
+
+  <div id="stage">
+    <div id="mediaLayer"></div>
+    <div id="tapCatcher"></div>
+    <div id="mediaLoading"><div class="spin"></div><span>Loading&hellip;</span></div>
+    <div id="mediaMsg"></div>
+  </div>
+
+  <div id="overlay" style="display:none;">
+    <div id="progress"></div>
+    <div class="place serif" id="ovPlace"></div>
+    <div class="region" id="ovRegion"></div>
+    <div class="clock"><b id="ovTime"></b> &nbsp;&middot;&nbsp; <span id="ovDate"></span></div>
+    <div class="count" id="ovCount"></div>
+  </div>
+
+  <div id="empty">
+    <h1 class="serif">No cameras yet</h1>
+    <p>Paste a webcam link to start the rotation. Name, place and local time are looked up automatically where possible &mdash; you can always fix them by hand.</p>
+    <button class="btn" id="emptyAddBtn">Add a camera</button>
+  </div>
+
+  <div id="chrome">
+    <div class="row">
+      <button class="iconbtn" id="addBtn" title="Add camera">&#43;</button>
+      <button class="iconbtn" id="pauseBtn" title="Pause">&#10073;&#10073;</button>
+      <button class="iconbtn" id="skipBtn" title="Skip">&#9654;&#9654;</button>
+      <button class="iconbtn" id="settingsBtn" title="Settings">&#9881;</button>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div class="closeRow">
+      <h2 class="serif">Cameras</h2>
+      <button class="btn secondary" id="closePanelBtn">Close</button>
+    </div>
+
+    <h3 id="formTitle">Add a camera</h3>
+
+    <div class="field">
+      <label>Stream URL &mdash; a direct video/image file works best (.m3u8, .mp4, or a refreshing .jpg); for a webcam page, use that site's own "embed" or "share" link if it has one &mdash; most webcam sites block their plain page link from being shown elsewhere</label>
+      <div class="urlRow">
+        <input id="f_url" type="url" placeholder="https://...">
+        <button class="btn small" id="fetchBtn" style="white-space:nowrap;">Fetch details</button>
+      </div>
+    </div>
+    <div class="status" id="fetchStatus"></div>
+    <div id="streamPicker" class="streamPicker"></div>
+
+    <div class="field">
+      <label>Name (shown large)</label>
+      <input id="f_name" type="text" placeholder="e.g. Iguazu Falls">
+    </div>
+    <div class="field">
+      <label>Place / region (shown small)</label>
+      <input id="f_place" type="text" placeholder="e.g. Iguazu National Park, Argentina">
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label>Source type</label>
+        <select id="f_type">
+          <option value="auto">Auto-detect</option>
+          <option value="youtube">YouTube</option>
+          <option value="video">Video / HLS (.m3u8, .mp4)</option>
+          <option value="image">Still image (auto-refresh)</option>
+          <option value="iframe">Generic embed (iframe)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Minutes on screen</label>
+        <input id="f_minutes" type="number" min="1" max="60" value="5">
+      </div>
+    </div>
+    <div class="field">
+      <label>Time zone &mdash; type a city or country to search (e.g. "Nairobi" or "Kenya")</label>
+      <div class="tzWrap">
+        <input id="f_tz" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="filled in automatically when possible, or search here">
+        <button type="button" id="tzClearBtn" class="tzClear" title="Clear">&times;</button>
+        <div id="tzSuggest" class="tzSuggest"></div>
+      </div>
+    </div>
+    <div class="status err" id="formErr"></div>
+    <div class="formActions">
+      <button class="btn" id="saveBtn">Add camera</button>
+      <button class="btn secondary" id="cancelEditBtn" style="display:none;">Cancel edit</button>
+    </div>
+
+    <h3>Rotation (<span id="camCount">0</span>)</h3>
+    <div id="camList"></div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  var STORAGE_KEY = "parkframe.cams.v2";
+  var cams = [];
+  var idx = 0;
+  var rotationTimer = null;
+  var imageRefreshTimer = null;
+  var paused = false;
+  var editingId = null;
+  var chromeHideTimer = null;
+
+  var el = {
+    mediaLayer: document.getElementById("mediaLayer"),
+    mediaLoading: document.getElementById("mediaLoading"),
+    mediaMsg: document.getElementById("mediaMsg"),
+    progress: document.getElementById("progress"),
+    overlay: document.getElementById("overlay"),
+    ovPlace: document.getElementById("ovPlace"),
+    ovRegion: document.getElementById("ovRegion"),
+    ovTime: document.getElementById("ovTime"),
+    ovDate: document.getElementById("ovDate"),
+    ovCount: document.getElementById("ovCount"),
+    empty: document.getElementById("empty"),
+    chrome: document.getElementById("chrome"),
+    panel: document.getElementById("panel"),
+    camList: document.getElementById("camList"),
+    camCount: document.getElementById("camCount"),
+    formTitle: document.getElementById("formTitle"),
+    f_name: document.getElementById("f_name"),
+    f_place: document.getElementById("f_place"),
+    f_url: document.getElementById("f_url"),
+    f_type: document.getElementById("f_type"),
+    f_minutes: document.getElementById("f_minutes"),
+    f_tz: document.getElementById("f_tz"),
+    tzSuggest: document.getElementById("tzSuggest"),
+    tzClearBtn: document.getElementById("tzClearBtn"),
+    formErr: document.getElementById("formErr"),
+    fetchStatus: document.getElementById("fetchStatus"),
+    fetchBtn: document.getElementById("fetchBtn"),
+    saveBtn: document.getElementById("saveBtn"),
+    cancelEditBtn: document.getElementById("cancelEditBtn")
+  };
+
+  // ---------- storage ----------
+  function load(){
+    try{ var raw = localStorage.getItem(STORAGE_KEY); cams = raw ? JSON.parse(raw) : []; }
+    catch(e){ cams = []; }
+  }
+  function save(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(cams)); }catch(e){} }
+
+  // ---------- helpers ----------
+  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+  function guessType(url){
+    var u = url.toLowerCase();
+    if(/youtube\.com|youtu\.be/.test(u)) return "youtube";
+    if(/\.m3u8(\?|$)/.test(u)) return "video";
+    if(/\.(mp4|mov|webm)(\?|$)/.test(u)) return "video";
+    if(/\.(jpg|jpeg|png|gif)(\?|$)/.test(u)) return "image";
+    return "iframe";
+  }
+
+  function youTubeId(url){
+    try{
+      var u = new URL(url);
+      if(u.hostname.indexOf("youtu.be") !== -1) return u.pathname.slice(1);
+      if(u.searchParams.get("v")) return u.searchParams.get("v");
+      var m = u.pathname.match(/\/(live|embed|shorts)\/([\w-]{6,})/);
+      if(m) return m[2];
+    }catch(e){}
+    return null;
+  }
+
+  function validTimeZone(tz){
+    try{ new Intl.DateTimeFormat("en-US", {timeZone: tz}); return true; }
+    catch(e){ return false; }
+  }
+
+  // Full IANA list via the browser's own built-in data (Safari 15.4+,
+  // so this is safe on any iPad running the Wake Lock API too).
+  // Falls back to a short curated list on anything older.
+  var FALLBACK_TZ = ["America/New_York","America/Chicago","America/Denver","America/Los_Angeles",
+    "America/Anchorage","Pacific/Honolulu","Europe/London","Europe/Paris","Africa/Nairobi",
+    "Africa/Johannesburg","Asia/Tokyo","Asia/Kolkata","Asia/Bangkok","Australia/Sydney",
+    "Pacific/Auckland","America/Sao_Paulo","America/Santiago","Asia/Dubai"];
+
+  // Country-name aliases for single-timezone countries, so typing "Kenya"
+  // finds Africa/Nairobi and not just "Nairobi" itself.
+  var COUNTRY_NAMES = {
+    GB:"United Kingdom",IE:"Ireland",FR:"France",ES:"Spain",PT:"Portugal",DE:"Germany",NL:"Netherlands",
+    BE:"Belgium",CH:"Switzerland",AT:"Austria",IT:"Italy",PL:"Poland",CZ:"Czech Republic",SK:"Slovakia",
+    HU:"Hungary",RO:"Romania",BG:"Bulgaria",GR:"Greece",SE:"Sweden",NO:"Norway",DK:"Denmark",FI:"Finland",
+    IS:"Iceland",EE:"Estonia",LV:"Latvia",LT:"Lithuania",UA:"Ukraine",BY:"Belarus",MD:"Moldova",HR:"Croatia",
+    SI:"Slovenia",RS:"Serbia",BA:"Bosnia and Herzegovina",ME:"Montenegro",MK:"North Macedonia",AL:"Albania",
+    LU:"Luxembourg",MT:"Malta",CY:"Cyprus",TR:"Turkey",DZ:"Algeria",MA:"Morocco",TN:"Tunisia",LY:"Libya",
+    EG:"Egypt",NG:"Nigeria",GH:"Ghana",SN:"Senegal",CI:"Ivory Coast",ML:"Mali",KE:"Kenya",TZ:"Tanzania",
+    UG:"Uganda",RW:"Rwanda",ET:"Ethiopia",ZA:"South Africa",NA:"Namibia",BW:"Botswana",ZM:"Zambia",
+    ZW:"Zimbabwe",MZ:"Mozambique",MW:"Malawi",MG:"Madagascar",MU:"Mauritius",SC:"Seychelles",CM:"Cameroon",
+    GA:"Gabon",AE:"United Arab Emirates",SA:"Saudi Arabia",QA:"Qatar",KW:"Kuwait",BH:"Bahrain",OM:"Oman",
+    JO:"Jordan",LB:"Lebanon",IL:"Israel",IQ:"Iraq",IR:"Iran",AF:"Afghanistan",PK:"Pakistan",IN:"India",
+    NP:"Nepal",BT:"Bhutan",BD:"Bangladesh",LK:"Sri Lanka",MM:"Myanmar",TH:"Thailand",LA:"Laos",KH:"Cambodia",
+    VN:"Vietnam",MY:"Malaysia",SG:"Singapore",PH:"Philippines",TW:"Taiwan",KR:"South Korea",KP:"North Korea",
+    JP:"Japan",CN:"China",HK:"Hong Kong",MO:"Macau",NZ:"New Zealand",FJ:"Fiji",WS:"Samoa",TO:"Tonga",
+    PG:"Papua New Guinea",VU:"Vanuatu",NC:"New Caledonia",PF:"French Polynesia",AR:"Argentina",CL:"Chile",
+    BO:"Bolivia",PY:"Paraguay",UY:"Uruguay",PE:"Peru",EC:"Ecuador",CO:"Colombia",VE:"Venezuela",GY:"Guyana",
+    SR:"Suriname",PA:"Panama",CR:"Costa Rica",NI:"Nicaragua",HN:"Honduras",GT:"Guatemala",SV:"El Salvador",
+    BZ:"Belize",CU:"Cuba",DO:"Dominican Republic",HT:"Haiti",JM:"Jamaica",TT:"Trinidad and Tobago",BS:"Bahamas",
+    KZ:"Kazakhstan"
+  };
+
+  // Multi-timezone countries: named regions so a country search still
+  // surfaces something sensible (e.g. "United States" -> Eastern/Central/...).
+  var MULTI_ZONE_LABELS = [
+    { country:"United States", zones:[
+        {zone:"America/New_York",region:"Eastern"},{zone:"America/Chicago",region:"Central"},
+        {zone:"America/Denver",region:"Mountain"},{zone:"America/Los_Angeles",region:"Pacific"},
+        {zone:"America/Anchorage",region:"Alaska"},{zone:"Pacific/Honolulu",region:"Hawaii"} ]},
+    { country:"Canada", zones:[
+        {zone:"America/St_Johns",region:"Newfoundland"},{zone:"America/Halifax",region:"Atlantic"},
+        {zone:"America/Toronto",region:"Eastern"},{zone:"America/Winnipeg",region:"Central"},
+        {zone:"America/Edmonton",region:"Mountain"},{zone:"America/Vancouver",region:"Pacific"} ]},
+    { country:"Russia", zones:[
+        {zone:"Europe/Moscow",region:"Moscow"},{zone:"Asia/Yekaterinburg",region:"Yekaterinburg"},
+        {zone:"Asia/Omsk",region:"Omsk"},{zone:"Asia/Krasnoyarsk",region:"Krasnoyarsk"},
+        {zone:"Asia/Irkutsk",region:"Irkutsk"},{zone:"Asia/Yakutsk",region:"Yakutsk"},
+        {zone:"Asia/Vladivostok",region:"Vladivostok"},{zone:"Asia/Magadan",region:"Magadan"},
+        {zone:"Asia/Kamchatka",region:"Kamchatka"} ]},
+    { country:"Australia", zones:[
+        {zone:"Australia/Perth",region:"Western"},{zone:"Australia/Adelaide",region:"Central"},
+        {zone:"Australia/Darwin",region:"Northern Territory"},{zone:"Australia/Brisbane",region:"Queensland"},
+        {zone:"Australia/Sydney",region:"Eastern"},{zone:"Australia/Hobart",region:"Tasmania"} ]},
+    { country:"Brazil", zones:[
+        {zone:"America/Noronha",region:"Fernando de Noronha"},{zone:"America/Sao_Paulo",region:"most of Brazil"},
+        {zone:"America/Manaus",region:"Amazonas"},{zone:"America/Rio_Branco",region:"Acre"} ]},
+    { country:"Mexico", zones:[
+        {zone:"America/Cancun",region:"Southeast"},{zone:"America/Mexico_City",region:"Central"},
+        {zone:"America/Hermosillo",region:"Sonora"},{zone:"America/Tijuana",region:"Baja California"} ]},
+    { country:"Indonesia", zones:[
+        {zone:"Asia/Jakarta",region:"Western"},{zone:"Asia/Makassar",region:"Central"},
+        {zone:"Asia/Jayapura",region:"Eastern"} ]}
+  ];
+
+  var ALL_TZ = [];
+  var TZ_INDEX = [];
+
+  function buildTimezoneIndex(){
+    try{ ALL_TZ = (typeof Intl.supportedValuesOf === "function") ? Intl.supportedValuesOf("timeZone") : FALLBACK_TZ; }
+    catch(e){ ALL_TZ = FALLBACK_TZ; }
+
+    var byZone = {};
+    ALL_TZ.forEach(function(z){
+      var parts = z.split("/");
+      var city = parts[parts.length - 1].replace(/_/g, " ");
+      byZone[z] = { zone: z, city: city, country: null, region: null };
+    });
+    Object.keys(COUNTRY_TZ).forEach(function(code){
+      var z = COUNTRY_TZ[code], name = COUNTRY_NAMES[code];
+      if(byZone[z] && name) byZone[z].country = name;
+    });
+    MULTI_ZONE_LABELS.forEach(function(entry){
+      entry.zones.forEach(function(zi){
+        if(byZone[zi.zone]){ byZone[zi.zone].country = entry.country; byZone[zi.zone].region = zi.region; }
+      });
+    });
+
+    TZ_INDEX = Object.keys(byZone).map(function(k){
+      var e = byZone[k];
+      var label = e.city + (e.region ? " (" + e.region + ")" : "") + (e.country ? ", " + e.country : "");
+      var search = (e.city + " " + e.zone + " " + (e.country || "") + " " + (e.region || "")).toLowerCase();
+      return { zone: e.zone, label: label, search: search };
+    });
+  }
+
+  function searchTimezones(q){
+    q = q.trim().toLowerCase();
+    if(!q) return [];
+    var starts = [], contains = [];
+    TZ_INDEX.forEach(function(e){
+      if(e.search.indexOf(q) === -1) return;
+      var isWordStart = e.search.split(/[\s\/]+/).some(function(w){ return w.indexOf(q) === 0; });
+      (isWordStart ? starts : contains).push(e);
+    });
+    return starts.concat(contains).slice(0, 8);
+  }
+
+  function hideTzSuggest(){ el.tzSuggest.classList.remove("show"); el.tzSuggest.innerHTML = ""; }
+
+  function renderTzSuggestions(query){
+    var matches = searchTimezones(query);
+    el.tzSuggest.innerHTML = "";
+    if(!query.trim()){ hideTzSuggest(); return; }
+    if(!matches.length){
+      var d = document.createElement("div");
+      d.className = "empty";
+      d.textContent = "No match \u2014 you can still type an exact zone id, e.g. Asia/Tokyo";
+      el.tzSuggest.appendChild(d);
+    } else {
+      matches.forEach(function(item){
+        var row = document.createElement("div");
+        row.className = "tzOpt";
+        row.textContent = item.label + " \u2014 " + item.zone;
+        row.addEventListener("pointerdown", function(e){
+          e.preventDefault();
+          el.f_tz.value = item.zone;
+          hideTzSuggest();
+        });
+        el.tzSuggest.appendChild(row);
+      });
+    }
+    el.tzSuggest.classList.add("show");
+  }
+
+  el.f_tz.addEventListener("input", function(){ renderTzSuggestions(el.f_tz.value); });
+  el.f_tz.addEventListener("focus", function(){ if(el.f_tz.value.trim()) renderTzSuggestions(el.f_tz.value); });
+  el.f_tz.addEventListener("blur", function(){ setTimeout(hideTzSuggest, 120); });
+  el.tzClearBtn.addEventListener("click", function(){
+    el.f_tz.value = "";
+    hideTzSuggest();
+    el.f_tz.focus();
+  });
+
+  function fetchTimeout(url, ms){
+    var controller = new AbortController();
+    var id = setTimeout(function(){ controller.abort(); }, ms || 7000);
+    return fetch(url, {signal: controller.signal}).finally(function(){ clearTimeout(id); });
+  }
+
+  // ================= AUTO-DETECTION =================
+  // Best-effort only. Browsers block reading most cross-site pages (CORS),
+  // so this can silently find nothing for some links -- that's expected,
+  // not a bug. Every field stays editable regardless of what's found.
+
+  async function detectYouTube(url){
+    try{
+      var r = await fetchTimeout("https://www.youtube.com/oembed?url=" + encodeURIComponent(url) + "&format=json", 6000);
+      if(!r.ok) return null;
+      var j = await r.json();
+      // A pasted "/@channel/live" URL has no video id in it at all -- the
+      // regex parse in youTubeId() can't find one. oEmbed resolves the
+      // *actual* live video server-side regardless of URL shape, and its
+      // thumbnail_url always embeds that resolved id (".../vi/ID/..."),
+      // so we pull the id from there instead of trusting the pasted URL.
+      var id = null;
+      if(j.thumbnail_url){
+        var m = j.thumbnail_url.match(/\/vi\/([\w-]+)\//);
+        if(m) id = m[1];
+      }
+      return { title: j.title || null, id: id };
+    }catch(e){ return null; }
+  }
+
+  async function detectVimeo(url){
+    try{
+      var r = await fetchTimeout("https://vimeo.com/api/oembed.json?url=" + encodeURIComponent(url), 6000);
+      if(!r.ok) return null;
+      var j = await r.json();
+      return j.title || null;
+    }catch(e){ return null; }
+  }
+
+  // Most public webcam PAGES (EarthCam, SkylineWebcams, Windy, a tourism
+  // board's own site, etc.) block being framed elsewhere -- that's a header
+  // the site itself sets, not something any app can override. So the default
+  // for a page like that is to show the page itself, exactly as a regular
+  // visitor would see it (an iframe of the real URL) -- not to guess at an
+  // extracted asset. The one exception is worth detecting: the page's own
+  // embedded PLAYER (a YouTube/Vimeo embed, or a direct .m3u8/video file
+  // referenced in the page). Those are unambiguous signals -- unlike a
+  // generic .jpg match, which is far too likely to be a logo or a
+  // thumbnail image and not the actual live footage (that was the bug:
+  // grabbing a YouTube preview thumbnail and showing it as if it were live).
+  // A page can also legitimately contain more than one camera (a park's
+  // "webcams" hub page, for example) -- so this collects every distinct
+  // match rather than stopping at the first.
+  function sniffStreamCandidates(text){
+    var out = [], seen = {};
+    function add(url, type, label, ytid){
+      if(seen[url]) return;
+      seen[url] = true;
+      out.push({ url: url, type: type, label: label, ytid: ytid || null });
+    }
+    (text.match(/https?:\/\/[^\s"'<>)]+\.m3u8[^\s"'<>)]*/ig) || []).forEach(function(u){
+      add(u, "video", "Direct video stream (.m3u8)");
+    });
+    (text.match(/https?:\/\/[^\s"'<>)]+\.(?:mp4|mov|webm)[^\s"'<>)]*/ig) || []).forEach(function(u){
+      add(u, "video", "Direct video file");
+    });
+    var ytRe = /youtube(?:-nocookie)?\.com\/embed\/([\w-]{6,})/ig, m;
+    while((m = ytRe.exec(text))){
+      add("https://www.youtube-nocookie.com/embed/" + m[1], "youtube", "YouTube embed", m[1]);
+    }
+    var vRe = /player\.vimeo\.com\/video\/(\d+)/ig;
+    while((m = vRe.exec(text))){
+      add("https://player.vimeo.com/video/" + m[1], "iframe", "Vimeo embed");
+    }
+    out.forEach(function(c, i){ c.label = c.label + " #" + (i + 1); });
+    return out;
+  }
+
+  // Generic fallback for any other host, via a public read-only page-reader
+  // (r.jina.ai). This is a third-party relay: it can be slow, rate-limited,
+  // or unavailable, and it sees the URL you paste. If it fails, we just move on.
+  async function detectGeneric(url){
+    try{
+      var r = await fetchTimeout("https://r.jina.ai/" + url, 8000);
+      if(!r.ok) return null;
+      var text = await r.text();
+      var lines = text.split("\n").map(function(l){ return l.trim(); }).filter(Boolean);
+      var title = null;
+      for(var i=0;i<lines.length;i++){
+        if(/^title:/i.test(lines[i])){ title = lines[i].replace(/^title:/i,"").trim().slice(0,120); break; }
+      }
+      if(!title && lines.length) title = lines[0].replace(/^#+\s*/,"").slice(0,120);
+      return { title: title, candidates: sniffStreamCandidates(text) };
+    }catch(e){ return null; }
+  }
+
+  async function geocode(query){
+    try{
+      var r = await fetchTimeout("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&q=" + encodeURIComponent(query), 8000);
+      if(!r.ok) return null;
+      var arr = await r.json();
+      if(!arr || !arr.length) return null;
+      var it = arr[0];
+      var parts = (it.display_name || "").split(",").map(function(s){return s.trim();}).slice(0,3);
+      return {
+        lat: parseFloat(it.lat),
+        lon: parseFloat(it.lon),
+        place: parts.join(", "),
+        country: (it.address && it.address.country_code) ? it.address.country_code.toUpperCase() : null
+      };
+    }catch(e){ return null; }
+  }
+
+  // Single-timezone countries (IANA zone already encodes DST rules, so this
+  // is exact, not an estimate, for these).
+  var COUNTRY_TZ = {
+    GB:"Europe/London",IE:"Europe/Dublin",FR:"Europe/Paris",ES:"Europe/Madrid",PT:"Europe/Lisbon",
+    DE:"Europe/Berlin",NL:"Europe/Amsterdam",BE:"Europe/Brussels",CH:"Europe/Zurich",AT:"Europe/Vienna",
+    IT:"Europe/Rome",PL:"Europe/Warsaw",CZ:"Europe/Prague",SK:"Europe/Bratislava",HU:"Europe/Budapest",
+    RO:"Europe/Bucharest",BG:"Europe/Sofia",GR:"Europe/Athens",SE:"Europe/Stockholm",NO:"Europe/Oslo",
+    DK:"Europe/Copenhagen",FI:"Europe/Helsinki",IS:"Atlantic/Reykjavik",EE:"Europe/Tallinn",LV:"Europe/Riga",
+    LT:"Europe/Vilnius",UA:"Europe/Kyiv",BY:"Europe/Minsk",MD:"Europe/Chisinau",HR:"Europe/Zagreb",
+    SI:"Europe/Ljubljana",RS:"Europe/Belgrade",BA:"Europe/Sarajevo",ME:"Europe/Podgorica",MK:"Europe/Skopje",
+    AL:"Europe/Tirane",LU:"Europe/Luxembourg",MT:"Europe/Malta",CY:"Asia/Nicosia",TR:"Europe/Istanbul",
+    DZ:"Africa/Algiers",MA:"Africa/Casablanca",TN:"Africa/Tunis",LY:"Africa/Tripoli",EG:"Africa/Cairo",
+    NG:"Africa/Lagos",GH:"Africa/Accra",SN:"Africa/Dakar",CI:"Africa/Abidjan",ML:"Africa/Bamako",
+    KE:"Africa/Nairobi",TZ:"Africa/Dar_es_Salaam",UG:"Africa/Kampala",RW:"Africa/Kigali",ET:"Africa/Addis_Ababa",
+    ZA:"Africa/Johannesburg",NA:"Africa/Windhoek",BW:"Africa/Gaborone",ZM:"Africa/Lusaka",ZW:"Africa/Harare",
+    MZ:"Africa/Maputo",MW:"Africa/Blantyre",MG:"Indian/Antananarivo",MU:"Indian/Mauritius",SC:"Indian/Mahe",
+    CM:"Africa/Douala",GA:"Africa/Libreville",AE:"Asia/Dubai",SA:"Asia/Riyadh",QA:"Asia/Qatar",
+    KW:"Asia/Kuwait",BH:"Asia/Bahrain",OM:"Asia/Muscat",JO:"Asia/Amman",LB:"Asia/Beirut",
+    IL:"Asia/Jerusalem",IQ:"Asia/Baghdad",IR:"Asia/Tehran",AF:"Asia/Kabul",PK:"Asia/Karachi",
+    IN:"Asia/Kolkata",NP:"Asia/Kathmandu",BT:"Asia/Thimphu",BD:"Asia/Dhaka",LK:"Asia/Colombo",
+    MM:"Asia/Yangon",TH:"Asia/Bangkok",LA:"Asia/Vientiane",KH:"Asia/Phnom_Penh",VN:"Asia/Ho_Chi_Minh",
+    MY:"Asia/Kuala_Lumpur",SG:"Asia/Singapore",PH:"Asia/Manila",TW:"Asia/Taipei",KR:"Asia/Seoul",
+    KP:"Asia/Pyongyang",JP:"Asia/Tokyo",CN:"Asia/Shanghai",HK:"Asia/Hong_Kong",MO:"Asia/Macau",
+    NZ:"Pacific/Auckland",FJ:"Pacific/Fiji",WS:"Pacific/Apia",TO:"Pacific/Tongatapu",PG:"Pacific/Port_Moresby",
+    VU:"Pacific/Efate",NC:"Pacific/Noumea",PF:"Pacific/Tahiti",AR:"America/Argentina/Buenos_Aires",
+    CL:"America/Santiago",BO:"America/La_Paz",PY:"America/Asuncion",UY:"America/Montevideo",
+    PE:"America/Lima",EC:"America/Guayaquil",CO:"America/Bogota",VE:"America/Caracas",
+    GY:"America/Guyana",SR:"America/Paramaribo",PA:"America/Panama",CR:"America/Costa_Rica",
+    NI:"America/Managua",HN:"America/Tegucigalpa",GT:"America/Guatemala",SV:"America/El_Salvador",
+    BZ:"America/Belize",CU:"America/Havana",DO:"America/Santo_Domingo",HT:"America/Port-au-Prince",
+    JM:"America/Jamaica",TT:"America/Port_of_Spain",BS:"America/Nassau",KZ:"Asia/Almaty"
+  };
+
+  // Multi-timezone countries: rough longitude/latitude bands. This is a
+  // labelled estimate -- correct for most national-park locations, wrong
+  // near an internal zone border. Always check and correct.
+  var MULTI_ZONE = {
+    US: function(lat, lon){
+      if(lat > 55 && lon < -130) return "America/Anchorage";
+      if(lat < 23 && lon > -161 && lon < -154) return "Pacific/Honolulu";
+      if(lon >= -87) return "America/New_York";
+      if(lon >= -101) return "America/Chicago";
+      if(lon >= -115) return "America/Denver";
+      return "America/Los_Angeles";
+    },
+    CA: function(lat, lon){
+      if(lon >= -59) return lat < 53 ? "America/St_Johns" : "America/Halifax";
+      if(lon >= -68) return "America/Halifax";
+      if(lon >= -90) return "America/Toronto";
+      if(lon >= -102) return "America/Winnipeg";
+      if(lon >= -120) return "America/Edmonton";
+      return "America/Vancouver";
+    },
+    RU: function(lat, lon){
+      if(lon < 40) return "Europe/Moscow";
+      if(lon < 60) return "Asia/Yekaterinburg";
+      if(lon < 75) return "Asia/Omsk";
+      if(lon < 90) return "Asia/Krasnoyarsk";
+      if(lon < 105) return "Asia/Irkutsk";
+      if(lon < 120) return "Asia/Yakutsk";
+      if(lon < 135) return "Asia/Vladivostok";
+      if(lon < 150) return "Asia/Magadan";
+      return "Asia/Kamchatka";
+    },
+    AU: function(lat, lon){
+      if(lon < 129) return "Australia/Perth";
+      if(lon < 138) return lat < -26 ? "Australia/Adelaide" : "Australia/Darwin";
+      if(lat < -39) return "Australia/Hobart";
+      if(lat > -29) return "Australia/Brisbane";
+      return "Australia/Sydney";
+    },
+    BR: function(lat, lon){
+      if(lon >= -38) return "America/Noronha";
+      if(lon <= -68) return "America/Rio_Branco";
+      if(lon <= -60) return "America/Manaus";
+      return "America/Sao_Paulo";
+    },
+    MX: function(lat, lon){
+      if(lon < -114) return "America/Tijuana";
+      if(lon < -109) return "America/Hermosillo";
+      if(lon > -90) return "America/Cancun";
+      return "America/Mexico_City";
+    },
+    ID: function(lat, lon){
+      if(lon < 115) return "Asia/Jakarta";
+      if(lon < 135) return "Asia/Makassar";
+      return "Asia/Jayapura";
+    },
+    CD: function(lat, lon){ return lon < 24 ? "Africa/Kinshasa" : "Africa/Lubumbashi"; },
+    MN: function(lat, lon){ return lon < 98 ? "Asia/Hovd" : "Asia/Ulaanbaatar"; }
+  };
+
+  function estimateTimezone(lat, lon, country){
+    if(country && MULTI_ZONE[country] && isFinite(lat) && isFinite(lon)) return MULTI_ZONE[country](lat, lon);
+    if(country && COUNTRY_TZ[country]) return COUNTRY_TZ[country];
+    return null;
+  }
+
+  function setStatus(msg, cls){
+    el.fetchStatus.className = "status" + (cls ? " " + cls : "");
+    el.fetchStatus.textContent = msg;
+  }
+
+  var lastYtId = null, lastYtUrl = null;
+
+  function applyStreamCandidate(c){
+    el.f_url.value = c.url;
+    el.f_type.value = c.type;
+    if(c.type === "youtube" && c.ytid){ lastYtId = c.ytid; lastYtUrl = c.url; }
+  }
+
+  function hideStreamPicker(){
+    var box = document.getElementById("streamPicker");
+    box.classList.remove("show");
+    box.innerHTML = "";
+  }
+
+  function renderStreamPicker(candidates){
+    var box = document.getElementById("streamPicker");
+    box.innerHTML = "";
+    candidates.forEach(function(c){
+      var row = document.createElement("div");
+      row.className = "tzOpt";
+      row.textContent = c.label;
+      row.addEventListener("pointerdown", function(e){
+        e.preventDefault();
+        applyStreamCandidate(c);
+        hideStreamPicker();
+        setStatus("Using " + c.label + ". Check the other fields, then save.", "ok");
+      });
+      box.appendChild(row);
+    });
+    box.classList.add("show");
+  }
+
+  async function runDetection(){
+    var url = el.f_url.value.trim();
+    if(!url){ setStatus("Paste a URL first.", "err"); return; }
+    setStatus("Looking up details\u2026", "busy");
+    el.fetchBtn.disabled = true;
+    hideStreamPicker();
+
+    var type = guessType(url);
+    var title = null;
+    var candidates = [];
+    if(type === "youtube"){
+      var yt = await detectYouTube(url);
+      if(yt){ title = yt.title; lastYtId = yt.id; lastYtUrl = url; }
+      else { lastYtId = null; lastYtUrl = null; }
+    }
+    else if(/vimeo\.com/i.test(url)) title = await detectVimeo(url);
+    else {
+      var g = await detectGeneric(url);
+      if(g){ title = g.title; candidates = g.candidates || []; }
+    }
+
+    var geo = null;
+    if(title) geo = await geocode(title);
+
+    if(title && !el.f_name.value.trim()) el.f_name.value = title.slice(0, 80);
+    if(geo && geo.place) el.f_place.value = geo.place;
+
+    var tz = geo ? estimateTimezone(geo.lat, geo.lon, geo.country) : null;
+    if(tz) el.f_tz.value = tz;
+
+    var swapped = false, multi = false;
+    if(candidates.length === 1){
+      applyStreamCandidate(candidates[0]);
+      swapped = true;
+    } else if(candidates.length > 1){
+      renderStreamPicker(candidates);
+      multi = true;
+    }
+
+    el.fetchBtn.disabled = false;
+    var found = [];
+    if(title) found.push("name"); if(geo && geo.place) found.push("place"); if(tz) found.push("time zone");
+    var foundMsg = found.length ? (" (" + found.join(", ") + " filled in.)") : "";
+
+    if(multi){
+      setStatus("This page has " + candidates.length + " camera streams \u2014 pick one below." + foundMsg, "ok");
+    } else if(swapped){
+      setStatus("Using this page's own embedded player." + foundMsg + " Check it, then save.", "ok");
+    } else if(found.length){
+      setStatus("Found " + found.join(", ") + ". This page will be shown as-is, the way a normal visitor sees it \u2014 if it doesn't display, look for that site's own \u201cembed\u201d link instead.", "ok");
+    } else {
+      setStatus("Couldn't detect details. This will be shown as a regular webpage \u2014 if that doesn't work, look for the site's own \u201cembed\u201d or \u201cshare\u201d link and paste that instead.", "err");
+    }
+  }
+
+  el.fetchBtn.addEventListener("click", runDetection);
+  el.f_url.addEventListener("paste", function(){
+    setTimeout(runDetection, 50); // let the pasted value land first
+  });
+
+  // ---------- media rendering ----------
+  var loadingHideTimer = null;
+  var mediaMsgTimer = null;
+  function showMediaLoading(){ el.mediaLoading.classList.add("show"); }
+  function hideMediaLoading(){ el.mediaLoading.classList.remove("show"); clearTimeout(loadingHideTimer); }
+  function showMediaMsg(text){ el.mediaMsg.textContent = text; el.mediaMsg.classList.add("show"); }
+  function hideMediaMsg(){ el.mediaMsg.classList.remove("show"); }
+
+  function clearMedia(){
+    if(imageRefreshTimer){ clearInterval(imageRefreshTimer); imageRefreshTimer = null; }
+    clearTimeout(mediaMsgTimer); mediaMsgTimer = null;
+    hideMediaMsg();
+    el.mediaLayer.innerHTML = "";
+  }
+
+  function renderCam(cam){
+    clearMedia();
+    showMediaLoading();
+    clearTimeout(loadingHideTimer);
+    loadingHideTimer = setTimeout(hideMediaLoading, 8000); // never gets stuck, even if a "ready" event never fires
+    var type = cam.type === "auto" ? guessType(cam.url) : cam.type;
+
+    if(type === "youtube"){
+      // Prefer the id resolved via oEmbed at save time (cam.ytid) over
+      // re-parsing the pasted URL: a "/@channel/live" link has no id in
+      // its own path, so youTubeId() alone would return null for it and
+      // we'd wrongly try to iframe the non-embeddable watch page.
+      var id = cam.ytid || youTubeId(cam.url);
+      var iframe = document.createElement("iframe");
+      iframe.src = id
+        ? "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0&loop=1&playlist=" + id
+        : cam.url;
+      iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+      iframe.setAttribute("allowfullscreen", "");
+      iframe.addEventListener("load", hideMediaLoading, {once:true});
+      el.mediaLayer.appendChild(iframe);
+      // A blocked/failed embed still fires "load" in most browsers, so this
+      // can't be a definite error -- it's an honest, hedged hint only.
+      mediaMsgTimer = setTimeout(function(){
+        showMediaMsg("If nothing is showing above, re-open Settings and use \u201cFetch details\u201d again, or try the direct video link instead of a channel page.");
+      }, 9000);
+    } else if(type === "video"){
+      var video = document.createElement("video");
+      video.src = cam.url; video.muted = true; video.autoplay = true; video.playsInline = true; video.loop = true;
+      video.preload = "auto";
+      video.addEventListener("loadeddata", hideMediaLoading, {once:true});
+      video.addEventListener("error", function(){
+        hideMediaLoading();
+        showMediaMsg("Couldn't load this video \u2014 check the link or source type in Settings.");
+      }, {once:true});
+      video.play().catch(function(){});
+      el.mediaLayer.appendChild(video);
+    } else if(type === "image"){
+      var img = document.createElement("img");
+      img.addEventListener("load", hideMediaLoading, {once:true});
+      img.addEventListener("error", function(){
+        hideMediaLoading();
+        showMediaMsg("Couldn't load this image \u2014 check the link in Settings.");
+      }, {once:true});
+      img.src = cam.url + (cam.url.indexOf("?") === -1 ? "?" : "&") + "t=" + Date.now();
+      el.mediaLayer.appendChild(img);
+      imageRefreshTimer = setInterval(function(){
+        img.src = cam.url + (cam.url.indexOf("?") === -1 ? "?" : "&") + "t=" + Date.now();
+      }, 15000);
+    } else {
+      var gen = document.createElement("iframe");
+      gen.src = cam.url;
+      gen.allow = "autoplay; encrypted-media; picture-in-picture";
+      gen.addEventListener("load", hideMediaLoading, {once:true});
+      el.mediaLayer.appendChild(gen);
+      mediaMsgTimer = setTimeout(function(){
+        showMediaMsg("If nothing is showing above, this site may not allow embedding \u2014 edit or remove it in Settings.");
+      }, 9000);
+    }
+  }
+
+  // ---------- overlay / clock ----------
+  function updateClock(){
+    var cam = cams[idx];
+    if(!cam) return;
+    var now = new Date();
+    var timeStr, dateStr;
+    try{
+      timeStr = new Intl.DateTimeFormat("en-US", {timeZone: cam.tz, hour:"numeric", minute:"2-digit", second:"2-digit", hour12:true}).format(now);
+      dateStr = new Intl.DateTimeFormat("en-US", {timeZone: cam.tz, weekday:"short", month:"short", day:"numeric"}).format(now);
+    }catch(e){ timeStr = "--:--:--"; dateStr = "unknown time zone"; }
+    el.ovTime.textContent = timeStr;
+    el.ovDate.textContent = dateStr;
+  }
+
+  function renderOverlay(cam){
+    el.ovPlace.textContent = cam.name;
+    el.ovRegion.textContent = cam.place || "";
+    el.ovCount.textContent = (idx + 1) + " / " + cams.length;
+    updateClock();
+  }
+
+  function startProgress(seconds){
+    el.progress.style.transition = "none";
+    el.progress.style.width = "0%";
+    void el.progress.offsetWidth;
+    el.progress.style.transition = "width " + seconds + "s linear";
+    el.progress.style.width = "100%";
+  }
+  function freezeProgress(){
+    var w = getComputedStyle(el.progress).width;
+    el.progress.style.transition = "none";
+    el.progress.style.width = w;
+  }
+
+  function showCam(i){
+    if(cams.length === 0) return;
+    idx = ((i % cams.length) + cams.length) % cams.length;
+    var cam = cams[idx];
+    renderCam(cam);
+    renderOverlay(cam);
+    if(!paused){
+      startProgress(Math.max(1, cam.minutes || 5) * 60);
+      clearTimeout(rotationTimer);
+      rotationTimer = setTimeout(function(){ showCam(idx + 1); }, Math.max(1, cam.minutes || 5) * 60000);
+    }
+  }
+
+  function refreshRotationUI(){
+    if(cams.length === 0){
+      el.empty.classList.remove("hidden");
+      el.overlay.style.display = "none";
+      clearMedia();
+      clearTimeout(rotationTimer);
+      return;
+    }
+    el.empty.classList.add("hidden");
+    el.overlay.style.display = "block";
+    if(idx >= cams.length) idx = 0;
+    showCam(idx);
+  }
+
+  document.getElementById("pauseBtn").addEventListener("click", function(){
+    paused = !paused;
+    this.textContent = paused ? "\u25B6" : "\u2503\u2503";
+    if(paused){ clearTimeout(rotationTimer); freezeProgress(); }
+    else{ showCam(idx); }
+  });
+  document.getElementById("skipBtn").addEventListener("click", function(){ showCam(idx + 1); });
+
+  function revealChrome(){
+    el.chrome.classList.add("show");
+    clearTimeout(chromeHideTimer);
+    chromeHideTimer = setTimeout(function(){ el.chrome.classList.remove("show"); }, 4000);
+  }
+  document.getElementById("stage").addEventListener("click", revealChrome);
+  document.getElementById("empty").addEventListener("click", function(e){ if(e.target.id === "empty") revealChrome(); });
+
+  function openPanel(){ el.panel.classList.add("open"); renderCamList(); }
+  function closePanel(){ el.panel.classList.remove("open"); }
+  document.getElementById("settingsBtn").addEventListener("click", openPanel);
+  document.getElementById("emptyAddBtn").addEventListener("click", openPanel);
+  document.getElementById("addBtn").addEventListener("click", function(){ resetForm(); openPanel(); });
+  document.getElementById("closePanelBtn").addEventListener("click", closePanel);
+
+  function resetForm(){
+    editingId = null;
+    el.formTitle.textContent = "Add a camera";
+    el.saveBtn.textContent = "Add camera";
+    el.cancelEditBtn.style.display = "none";
+    el.f_name.value = ""; el.f_place.value = ""; el.f_url.value = "";
+    el.f_type.value = "auto"; el.f_minutes.value = "5"; el.f_tz.value = "";
+    el.formErr.textContent = ""; setStatus("", ""); hideTzSuggest(); hideStreamPicker();
+    lastYtId = null; lastYtUrl = null;
+  }
+  document.getElementById("cancelEditBtn").addEventListener("click", resetForm);
+
+  function renderCamList(){
+    el.camCount.textContent = cams.length;
+    el.camList.innerHTML = "";
+    cams.forEach(function(cam, i){
+      var row = document.createElement("div");
+      row.className = "camrow";
+      row.innerHTML =
+        '<div class="meta"><div class="n"></div><div class="p"></div></div>' +
+        '<div class="actions">' +
+          '<button class="smallbtn" data-act="up">&#8593;</button>' +
+          '<button class="smallbtn" data-act="down">&#8595;</button>' +
+          '<button class="smallbtn" data-act="edit">Edit</button>' +
+          '<button class="smallbtn" data-act="del" style="color:var(--danger);">Delete</button>' +
+        '</div>';
+      row.querySelector(".n").textContent = cam.name;
+      row.querySelector(".p").textContent = (cam.place ? cam.place + " \u2014 " : "") + cam.tz + " \u2014 " + cam.minutes + " min";
+      row.querySelector('[data-act="up"]').addEventListener("click", function(){ moveCam(i, -1); });
+      row.querySelector('[data-act="down"]').addEventListener("click", function(){ moveCam(i, 1); });
+      row.querySelector('[data-act="edit"]').addEventListener("click", function(){ editCam(cam.id); });
+      row.querySelector('[data-act="del"]').addEventListener("click", function(){ deleteCam(cam.id); });
+      el.camList.appendChild(row);
+    });
+  }
+
+  function moveCam(i, dir){
+    var j = i + dir;
+    if(j < 0 || j >= cams.length) return;
+    var tmp = cams[i]; cams[i] = cams[j]; cams[j] = tmp;
+    save(); renderCamList();
+  }
+
+  function editCam(id){
+    var cam = cams.find(function(c){ return c.id === id; });
+    if(!cam) return;
+    editingId = id;
+    el.formTitle.textContent = "Edit camera";
+    el.saveBtn.textContent = "Save changes";
+    el.cancelEditBtn.style.display = "inline-block";
+    el.f_name.value = cam.name; el.f_place.value = cam.place || ""; el.f_url.value = cam.url;
+    el.f_type.value = cam.type; el.f_minutes.value = cam.minutes; el.f_tz.value = cam.tz;
+    el.formErr.textContent = ""; setStatus("", ""); hideTzSuggest(); hideStreamPicker();
+    window.scrollTo(0,0);
+  }
+
+  function deleteCam(id){
+    cams = cams.filter(function(c){ return c.id !== id; });
+    save(); renderCamList(); refreshRotationUI();
+  }
+
+  document.getElementById("saveBtn").addEventListener("click", function(){
+    var name = el.f_name.value.trim();
+    var place = el.f_place.value.trim();
+    var url = el.f_url.value.trim();
+    var type = el.f_type.value;
+    var minutes = parseInt(el.f_minutes.value, 10);
+    var tz = el.f_tz.value.trim();
+
+    if(!name){ el.formErr.textContent = "Name is required."; return; }
+    if(!url){ el.formErr.textContent = "Stream URL is required."; return; }
+    if(!tz || !validTimeZone(tz)){ el.formErr.textContent = "Enter a valid time zone (e.g. Asia/Tokyo) \u2014 auto-detect couldn't confirm one."; return; }
+    if(!minutes || minutes < 1) minutes = 5;
+    el.formErr.textContent = "";
+
+    var ytid = (lastYtId && lastYtUrl === url) ? lastYtId : null;
+
+    if(editingId){
+      var cam = cams.find(function(c){ return c.id === editingId; });
+      var urlChanged = cam.url !== url;
+      cam.name = name; cam.place = place; cam.url = url; cam.type = type; cam.minutes = minutes; cam.tz = tz;
+      cam.ytid = urlChanged ? ytid : (ytid || cam.ytid || null);
+    } else {
+      cams.push({ id: uid(), name: name, place: place, url: url, type: type, minutes: minutes, tz: tz, ytid: ytid });
+    }
+    save(); resetForm(); renderCamList(); refreshRotationUI();
+  });
+
+  // ---------- wake lock ----------
+  var wakeLock = null;
+  function requestWakeLock(){
+    if("wakeLock" in navigator){
+      navigator.wakeLock.request("screen").then(function(lock){ wakeLock = lock; }).catch(function(){});
+    }
+  }
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "visible") requestWakeLock();
+  });
+
+  // ---------- boot ----------
+  load();
+  buildTimezoneIndex();
+  refreshRotationUI();
+  setInterval(updateClock, 1000);
+  requestWakeLock();
+
+})();
+</script>
+</body>
+</html>
