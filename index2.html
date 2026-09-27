@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Park Frame</title>
+<style>
+  :root{
+    --bg:#060605; --ink:#F2ECDD; --ink-dim:#AEB8AC;
+    --accent:#C08A46; --danger:#C1503D; --ok:#7FA06B;
+    --panel:#0E100D; --line:rgba(242,236,221,.14); --radius:3px;
+    font-variant-numeric: tabular-nums;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    height:100%; margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system, system-ui, "Helvetica Neue", Arial, sans-serif;
+    overflow:hidden; -webkit-user-select:none; user-select:none;
+  }
+  .serif{ font-family: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, Times, serif; }
+
+  #stage{ position:fixed; inset:0; background:#000; }
+  /* pointer-events:none is what stops an embedded player from swallowing taps */
+  #mediaLayer{ position:absolute; inset:0; pointer-events:none; }
+  #mediaLayer video, #mediaLayer img, #mediaLayer iframe{
+    width:100%; height:100%; object-fit:cover; border:0; display:block; background:#000;
+    pointer-events:none;
+  }
+
+  /* transparent full-screen tap target that sits ABOVE the media */
+  #tapCatcher{ position:fixed; inset:0; z-index:35; background:transparent; }
+
+  #progress{
+    position:fixed; top:0; left:0; height:3px; width:0%;
+    background:var(--accent); z-index:30; padding-top:env(safe-area-inset-top,0px);
+  }
+
+  #overlay{
+    position:fixed; left:0; right:0; bottom:0; z-index:20;
+    padding:28px 32px calc(24px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,.45) 55%, transparent);
+    pointer-events:none; transition:opacity .4s ease;
+  }
+  #overlay .place{ font-size:34px; line-height:1.15; font-weight:600; }
+  #overlay .region{ font-size:16px; color:var(--ink-dim); margin-top:4px; }
+  #overlay .clock{ margin-top:14px; font-size:15px; color:var(--ink-dim); letter-spacing:.2px; }
+  #overlay .clock b{ color:var(--ink); font-weight:600; }
+  #overlay .count{ position:absolute; right:32px; bottom:calc(24px + env(safe-area-inset-bottom,0px)); font-size:13px; color:var(--ink-dim); }
+  #overlay .warn{ margin-top:8px; font-size:13px; color:var(--danger); }
+
+  #empty{
+    position:fixed; inset:0; z-index:45;
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column; text-align:center; gap:14px; padding:24px;
+    background:var(--bg);
+  }
+  #empty h1{ font-size:28px; font-weight:600; margin:0; }
+  #empty p{ margin:0; color:var(--ink-dim); font-size:15px; max-width:380px; line-height:1.5; }
+  #empty.hidden{ display:none; }
+
+  button{ font-family:inherit; cursor:pointer; border:0; border-radius:var(--radius); }
+  .btn{ background:var(--accent); color:#100C06; font-size:15px; font-weight:600; padding:12px 20px; }
+  .btn.secondary{ background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .btn.small{ padding:9px 14px; font-size:13px; }
+  .btn:disabled{ opacity:.5; }
+
+  #chrome{ position:fixed; inset:0; z-index:40; pointer-events:none; }
+  #chrome .row{
+    position:fixed; top:0; right:0; display:flex; gap:10px;
+    padding:calc(16px + env(safe-area-inset-top,0px)) 16px 0 0;
+    opacity:0; transition:opacity .3s ease; pointer-events:none;
+  }
+  #chrome.show .row{ opacity:1; pointer-events:auto; }
+  .iconbtn{
+    width:48px; height:48px; border-radius:50%;
+    background:rgba(10,10,8,.72); color:var(--ink);
+    display:flex; align-items:center; justify-content:center; font-size:20px;
+  }
+  #hint{
+    position:fixed; z-index:41; top:calc(24px + env(safe-area-inset-top,0px)); left:24px;
+    font-size:13px; color:var(--ink-dim); background:rgba(10,10,8,.72);
+    padding:8px 12px; border-radius:var(--radius);
+    opacity:0; transition:opacity .4s ease; pointer-events:none;
+  }
+  #hint.show{ opacity:1; }
+
+  #panel{
+    position:fixed; inset:0; z-index:60; background:var(--panel);
+    transform:translateY(100%); transition:transform .35s ease;
+    overflow-y:auto; -webkit-user-select:text; user-select:text;
+    padding: calc(20px + env(safe-area-inset-top,0px)) 20px calc(40px + env(safe-area-inset-bottom,0px));
+  }
+  #panel.open{ transform:translateY(0); }
+  #panel h2{ font-size:22px; margin:0 0 18px; }
+  #panel h3{ font-size:14px; color:var(--ink-dim); font-weight:600; margin:28px 0 12px; }
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:13px; color:var(--ink-dim); margin-bottom:6px; line-height:1.4; }
+  .field input, .field select{
+    width:100%; padding:11px 12px; font-size:15px; font-family:inherit;
+    background:#181A15; color:var(--ink); border:1px solid var(--line); border-radius:var(--radius);
+  }
+  .rowBtns{ display:flex; gap:8px; flex-wrap:wrap; margin-top:4px; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .status{ font-size:13px; margin:6px 0 4px; min-height:16px; line-height:1.45; }
+  .status.err{ color:var(--danger); }
+  .status.ok{ color:var(--ok); }
+  .status.busy{ color:var(--ink-dim); }
+  .help{ font-size:12px; color:var(--ink-dim); line-height:1.5; margin:6px 0 0; }
+  .formActions{ display:flex; gap:10px; margin-top:10px; }
+
+  .tzWrap{ position:relative; }
+  .tzWrap input{ padding-right:38px; }
+  .tzClear{
+    position:absolute; right:6px; top:9px; width:28px; height:28px; border-radius:50%;
+    background:transparent; color:var(--ink-dim); font-size:19px; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .tzClear:active{ background:var(--line); }
+  .tzSuggest{
+    position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:5;
+    background:#181A15; border:1px solid var(--line); border-radius:var(--radius);
+    max-height:240px; overflow-y:auto; display:none;
+  }
+  .tzSuggest.show{ display:block; }
+  .tzOpt{ padding:11px 12px; font-size:14px; border-bottom:1px solid var(--line); }
+  .tzOpt:last-child{ border-bottom:0; }
+  .tzOpt:active{ background:var(--line); }
+  .tzSuggest .empty{ padding:11px 12px; font-size:13px; color:var(--ink-dim); }
+
+  .cands{ margin:4px 0 0; }
+  .cand{ display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); }
+  .cand:last-child{ border-bottom:0; }
+  .cand .cmeta{ flex:1; min-width:0; }
+  .cand .ck{ font-size:11px; color:var(--accent); letter-spacing:.6px; text-transform:uppercase; }
+  .cand .cu{ font-size:12px; color:var(--ink-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  .cand.chosen{ background:rgba(192,138,70,.08); }
+
+  #previewBox{ display:none; margin:10px 0 0; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:#000; }
+  #previewBox.show{ display:block; }
+  #previewBox img, #previewBox video, #previewBox iframe{
+    width:100%; height:190px; object-fit:contain; display:block; background:#000; border:0;
+  }
+  .pvStatus{ padding:9px 11px; font-size:13px; color:var(--ink-dim); }
+  .pvStatus.ok{ color:var(--ok); }
+  .pvStatus.err{ color:var(--danger); }
+
+  .camrow{ display:flex; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .camrow .meta{ flex:1; min-width:0; }
+  .camrow .meta .n{ font-weight:600; font-size:15px; }
+  .camrow .meta .p{ font-size:13px; color:var(--ink-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .camrow .actions{ display:flex; gap:6px; flex-shrink:0; }
+  .smallbtn{ background:transparent; color:var(--ink-dim); border:1px solid var(--line); border-radius:var(--radius); padding:7px 10px; font-size:13px; }
+  .closeRow{ display:flex; justify-content:space-between; align-items:center; }
+  .chk{ display:flex; align-items:center; gap:9px; font-size:13px; color:var(--ink-dim); margin:2px 0 14px; }
+  .chk input{ width:19px; height:19px; }
+</style>
+</head>
+<body>
+
+  <div id="stage"><div id="mediaLayer"></div></div>
+  <div id="tapCatcher"></div>
+  <div id="progress"></div>
+
+  <div id="overlay" style="display:none;">
+    <div class="place serif" id="ovPlace"></div>
+    <div class="region" id="ovRegion"></div>
+    <div class="clock"><b id="ovTime"></b> &nbsp;&middot;&nbsp; <span id="ovDate"></span></div>
+    <div class="warn" id="ovWarn" style="display:none;"></div>
+    <div class="count" id="ovCount"></div>
+  </div>
+
+  <div id="hint">Tap anywhere for controls</div>
+
+  <div id="empty">
+    <h1 class="serif">No cameras yet</h1>
+    <p>Paste the address of any page that shows a public webcam. The app will look through that page and offer the actual image or video stream it finds.</p>
+    <button class="btn" id="emptyAddBtn">Add a camera</button>
+  </div>
+
+  <div id="chrome">
+    <div class="row">
+      <button class="iconbtn" id="addBtn" title="Add camera">&#43;</button>
+      <button class="iconbtn" id="pauseBtn" title="Pause">&#10073;&#10073;</button>
+      <button class="iconbtn" id="skipBtn" title="Skip">&#9654;&#9654;</button>
+      <button class="iconbtn" id="settingsBtn" title="Settings">&#9881;</button>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div class="closeRow">
+      <h2 class="serif">Cameras</h2>
+      <button class="btn secondary" id="closePanelBtn">Close</button>
+    </div>
+
+    <h3 id="formTitle">Add a camera</h3>
+
+    <div class="field">
+      <label>Webcam page address &mdash; paste the page you would normally open to watch the camera. A direct image or video address works too.</label>
+      <input id="f_url" type="url" placeholder="https://...">
+      <div class="rowBtns">
+        <button class="btn small" id="findBtn">Find the stream on this page</button>
+        <button class="btn small secondary" id="useDirectBtn">Use this address directly</button>
+      </div>
+    </div>
+    <div class="status" id="fetchStatus"></div>
+
+    <div class="cands" id="candList"></div>
+    <div id="previewBox"></div>
+
+    <p class="help" id="manualHelp">
+      If nothing is found: open the camera page in Safari, press and hold the picture or video, choose
+      &ldquo;Copy Image Address&rdquo; (or &ldquo;Copy Link&rdquo;), paste it above and press
+      &ldquo;Use this address directly&rdquo;. That path is the most reliable one and needs no lookup.
+    </p>
+
+    <h3>Details</h3>
+    <div class="field">
+      <label>Name (shown large)</label>
+      <input id="f_name" type="text" placeholder="e.g. Iguazu Falls">
+    </div>
+    <div class="field">
+      <label>Place / region (shown small)</label>
+      <input id="f_place" type="text" placeholder="e.g. Iguazu National Park, Argentina">
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label>How it is shown</label>
+        <select id="f_type">
+          <option value="auto">Decide automatically</option>
+          <option value="video">Video / HLS stream</option>
+          <option value="image">Still image, refreshed</option>
+          <option value="youtube">YouTube</option>
+          <option value="iframe">Embedded page</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Minutes on screen</label>
+        <input id="f_minutes" type="number" min="1" max="60" value="5">
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label>Refresh a still image every (seconds)</label>
+        <input id="f_refresh" type="number" min="2" max="300" value="15">
+      </div>
+      <div class="field">
+        <label>Time zone &mdash; type a city or country</label>
+        <div class="tzWrap">
+          <input id="f_tz" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="e.g. Nairobi, or Kenya">
+          <button type="button" id="tzClearBtn" class="tzClear" title="Clear">&times;</button>
+          <div id="tzSuggest" class="tzSuggest"></div>
+        </div>
+      </div>
+    </div>
+    <label class="chk">
+      <input type="checkbox" id="f_reresolve">
+      Look up the stream address again each time this camera comes round (for cameras whose link expires)
+    </label>
+
+    <div class="status err" id="formErr"></div>
+    <div class="formActions">
+      <button class="btn" id="saveBtn">Add camera</button>
+      <button class="btn secondary" id="cancelEditBtn" style="display:none;">Cancel edit</button>
+    </div>
+
+    <h3>Rotation (<span id="camCount">0</span>)</h3>
+    <div id="camList"></div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  var STORAGE_KEY = "parkframe.cams.v3";
+  var cams = [];
+  var idx = 0;
+  var rotationTimer = null, imageRefreshTimer = null, chromeHideTimer = null;
+  var paused = false, editingId = null;
+  var chosenMedia = null;   // {url, kind} currently selected for the form
+
+  var el = {};
+  ["mediaLayer","progress","overlay","ovPlace","ovRegion","ovTime","ovDate","ovCount","ovWarn",
+   "empty","chrome","panel","camList","camCount","formTitle","hint","tapCatcher",
+   "f_name","f_place","f_url","f_type","f_minutes","f_tz","f_refresh","f_reresolve",
+   "tzSuggest","tzClearBtn","formErr","fetchStatus","findBtn","useDirectBtn",
+   "saveBtn","cancelEditBtn","candList","previewBox"].forEach(function(id){
+    el[id] = document.getElementById(id);
+  });
+
+  // ---------------- storage ----------------
+  function load(){
+    try{ var raw = localStorage.getItem(STORAGE_KEY); cams = raw ? JSON.parse(raw) : []; }
+    catch(e){ cams = []; }
+  }
+  function save(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(cams)); }catch(e){} }
+
+  // ---------------- small helpers ----------------
+  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+  function bust(url){
+    return url + (url.indexOf("?") === -1 ? "?" : "&") + "_t=" + Date.now();
+  }
+
+  function guessKind(url){
+    var u = (url || "").toLowerCase();
+    if(/youtube\.com|youtu\.be/.test(u)) return "youtube";
+    if(/\.m3u8(\?|$)/.test(u)) return "video";
+    if(/\.(mp4|webm|mov)(\?|$)/.test(u)) return "video";
+    if(/\.(jpg|jpeg|png|gif|webp)(\?|$)/.test(u)) return "image";
+    return "iframe";
+  }
+
+  function youTubeId(url){
+    try{
+      var u = new URL(url);
+      if(u.hostname.indexOf("youtu.be") !== -1) return u.pathname.slice(1);
+      if(u.searchParams.get("v")) return u.searchParams.get("v");
+      var m = u.pathname.match(/\/(live|embed|shorts)\/([\w-]{6,})/);
+      if(m) return m[2];
+    }catch(e){}
+    return null;
+  }
+
+  function validTimeZone(tz){
+    try{ new Intl.DateTimeFormat("en-US", {timeZone: tz}); return true; }
+    catch(e){ return false; }
+  }
+
+  function fetchTimeout(url, ms){
+    var controller = new AbortController();
+    var id = setTimeout(function(){ controller.abort(); }, ms || 8000);
+    return fetch(url, {signal: controller.signal}).then(function(r){
+      clearTimeout(id); return r;
+    }, function(e){ clearTimeout(id); throw e; });
+  }
+
+  function absUrl(u, base){
+    try{ return new URL(u, base).href; }catch(e){ return null; }
+  }
+
+  // ================= TIME ZONES =================
+  var FALLBACK_TZ = ["America/New_York","America/Chicago","America/Denver","America/Los_Angeles",
+    "America/Anchorage","Pacific/Honolulu","Europe/London","Europe/Paris","Africa/Nairobi",
+    "Africa/Johannesburg","Asia/Tokyo","Asia/Kolkata","Asia/Bangkok","Australia/Sydney",
+    "Pacific/Auckland","America/Sao_Paulo","America/Santiago","Asia/Dubai"];
+
+  var COUNTRY_TZ = {
+    GB:"Europe/London",IE:"Europe/Dublin",FR:"Europe/Paris",ES:"Europe/Madrid",PT:"Europe/Lisbon",
+    DE:"Europe/Berlin",NL:"Europe/Amsterdam",BE:"Europe/Brussels",CH:"Europe/Zurich",AT:"Europe/Vienna",
+    IT:"Europe/Rome",PL:"Europe/Warsaw",CZ:"Europe/Prague",SK:"Europe/Bratislava",HU:"Europe/Budapest",
+    RO:"Europe/Bucharest",BG:"Europe/Sofia",GR:"Europe/Athens",SE:"Europe/Stockholm",NO:"Europe/Oslo",
+    DK:"Europe/Copenhagen",FI:"Europe/Helsinki",IS:"Atlantic/Reykjavik",EE:"Europe/Tallinn",LV:"Europe/Riga",
+    LT:"Europe/Vilnius",UA:"Europe/Kyiv",BY:"Europe/Minsk",MD:"Europe/Chisinau",HR:"Europe/Zagreb",
+    SI:"Europe/Ljubljana",RS:"Europe/Belgrade",BA:"Europe/Sarajevo",ME:"Europe/Podgorica",MK:"Europe/Skopje",
+    AL:"Europe/Tirane",LU:"Europe/Luxembourg",MT:"Europe/Malta",CY:"Asia/Nicosia",TR:"Europe/Istanbul",
+    DZ:"Africa/Algiers",MA:"Africa/Casablanca",TN:"Africa/Tunis",LY:"Africa/Tripoli",EG:"Africa/Cairo",
+    NG:"Africa/Lagos",GH:"Africa/Accra",SN:"Africa/Dakar",CI:"Africa/Abidjan",ML:"Africa/Bamako",
+    KE:"Africa/Nairobi",TZ:"Africa/Dar_es_Salaam",UG:"Africa/Kampala",RW:"Africa/Kigali",ET:"Africa/Addis_Ababa",
+    ZA:"Africa/Johannesburg",NA:"Africa/Windhoek",BW:"Africa/Gaborone",ZM:"Africa/Lusaka",ZW:"Africa/Harare",
+    MZ:"Africa/Maputo",MW:"Africa/Blantyre",MG:"Indian/Antananarivo",MU:"Indian/Mauritius",SC:"Indian/Mahe",
+    CM:"Africa/Douala",GA:"Africa/Libreville",AE:"Asia/Dubai",SA:"Asia/Riyadh",QA:"Asia/Qatar",
+    KW:"Asia/Kuwait",BH:"Asia/Bahrain",OM:"Asia/Muscat",JO:"Asia/Amman",LB:"Asia/Beirut",
+    IL:"Asia/Jerusalem",IQ:"Asia/Baghdad",IR:"Asia/Tehran",AF:"Asia/Kabul",PK:"Asia/Karachi",
+    IN:"Asia/Kolkata",NP:"Asia/Kathmandu",BT:"Asia/Thimphu",BD:"Asia/Dhaka",LK:"Asia/Colombo",
+    MM:"Asia/Yangon",TH:"Asia/Bangkok",LA:"Asia/Vientiane",KH:"Asia/Phnom_Penh",VN:"Asia/Ho_Chi_Minh",
+    MY:"Asia/Kuala_Lumpur",SG:"Asia/Singapore",PH:"Asia/Manila",TW:"Asia/Taipei",KR:"Asia/Seoul",
+    KP:"Asia/Pyongyang",JP:"Asia/Tokyo",CN:"Asia/Shanghai",HK:"Asia/Hong_Kong",MO:"Asia/Macau",
+    NZ:"Pacific/Auckland",FJ:"Pacific/Fiji",WS:"Pacific/Apia",TO:"Pacific/Tongatapu",PG:"Pacific/Port_Moresby",
+    VU:"Pacific/Efate",NC:"Pacific/Noumea",PF:"Pacific/Tahiti",AR:"America/Argentina/Buenos_Aires",
+    CL:"America/Santiago",BO:"America/La_Paz",PY:"America/Asuncion",UY:"America/Montevideo",
+    PE:"America/Lima",EC:"America/Guayaquil",CO:"America/Bogota",VE:"America/Caracas",
+    GY:"America/Guyana",SR:"America/Paramaribo",PA:"America/Panama",CR:"America/Costa_Rica",
+    NI:"America/Managua",HN:"America/Tegucigalpa",GT:"America/Guatemala",SV:"America/El_Salvador",
+    BZ:"America/Belize",CU:"America/Havana",DO:"America/Santo_Domingo",HT:"America/Port-au-Prince",
+    JM:"America/Jamaica",TT:"America/Port_of_Spain",BS:"America/Nassau",KZ:"Asia/Almaty"
+  };
+
+  var COUNTRY_NAMES = {
+    GB:"United Kingdom",IE:"Ireland",FR:"France",ES:"Spain",PT:"Portugal",DE:"Germany",NL:"Netherlands",
+    BE:"Belgium",CH:"Switzerland",AT:"Austria",IT:"Italy",PL:"Poland",CZ:"Czech Republic",SK:"Slovakia",
+    HU:"Hungary",RO:"Romania",BG:"Bulgaria",GR:"Greece",SE:"Sweden",NO:"Norway",DK:"Denmark",FI:"Finland",
+    IS:"Iceland",EE:"Estonia",LV:"Latvia",LT:"Lithuania",UA:"Ukraine",BY:"Belarus",MD:"Moldova",HR:"Croatia",
+    SI:"Slovenia",RS:"Serbia",BA:"Bosnia and Herzegovina",ME:"Montenegro",MK:"North Macedonia",AL:"Albania",
+    LU:"Luxembourg",MT:"Malta",CY:"Cyprus",TR:"Turkey",DZ:"Algeria",MA:"Morocco",TN:"Tunisia",LY:"Libya",
+    EG:"Egypt",NG:"Nigeria",GH:"Ghana",SN:"Senegal",CI:"Ivory Coast",ML:"Mali",KE:"Kenya",TZ:"Tanzania",
+    UG:"Uganda",RW:"Rwanda",ET:"Ethiopia",ZA:"South Africa",NA:"Namibia",BW:"Botswana",ZM:"Zambia",
+    ZW:"Zimbabwe",MZ:"Mozambique",MW:"Malawi",MG:"Madagascar",MU:"Mauritius",SC:"Seychelles",CM:"Cameroon",
+    GA:"Gabon",AE:"United Arab Emirates",SA:"Saudi Arabia",QA:"Qatar",KW:"Kuwait",BH:"Bahrain",OM:"Oman",
+    JO:"Jordan",LB:"Lebanon",IL:"Israel",IQ:"Iraq",IR:"Iran",AF:"Afghanistan",PK:"Pakistan",IN:"India",
+    NP:"Nepal",BT:"Bhutan",BD:"Bangladesh",LK:"Sri Lanka",MM:"Myanmar",TH:"Thailand",LA:"Laos",KH:"Cambodia",
+    VN:"Vietnam",MY:"Malaysia",SG:"Singapore",PH:"Philippines",TW:"Taiwan",KR:"South Korea",KP:"North Korea",
+    JP:"Japan",CN:"China",HK:"Hong Kong",MO:"Macau",NZ:"New Zealand",FJ:"Fiji",WS:"Samoa",TO:"Tonga",
+    PG:"Papua New Guinea",VU:"Vanuatu",NC:"New Caledonia",PF:"French Polynesia",AR:"Argentina",CL:"Chile",
+    BO:"Bolivia",PY:"Paraguay",UY:"Uruguay",PE:"Peru",EC:"Ecuador",CO:"Colombia",VE:"Venezuela",GY:"Guyana",
+    SR:"Suriname",PA:"Panama",CR:"Costa Rica",NI:"Nicaragua",HN:"Honduras",GT:"Guatemala",SV:"El Salvador",
+    BZ:"Belize",CU:"Cuba",DO:"Dominican Republic",HT:"Haiti",JM:"Jamaica",TT:"Trinidad and Tobago",
+    BS:"Bahamas",KZ:"Kazakhstan"
+  };
+
+  var MULTI_ZONE_LABELS = [
+    { country:"United States", zones:[
+        {zone:"America/New_York",region:"Eastern"},{zone:"America/Chicago",region:"Central"},
+        {zone:"America/Denver",region:"Mountain"},{zone:"America/Los_Angeles",region:"Pacific"},
+        {zone:"America/Anchorage",region:"Alaska"},{zone:"Pacific/Honolulu",region:"Hawaii"} ]},
+    { country:"Canada", zones:[
+        {zone:"America/St_Johns",region:"Newfoundland"},{zone:"America/Halifax",region:"Atlantic"},
+        {zone:"America/Toronto",region:"Eastern"},{zone:"America/Winnipeg",region:"Central"},
+        {zone:"America/Edmonton",region:"Mountain"},{zone:"America/Vancouver",region:"Pacific"} ]},
+    { country:"Russia", zones:[
+        {zone:"Europe/Moscow",region:"Moscow"},{zone:"Asia/Yekaterinburg",region:"Yekaterinburg"},
+        {zone:"Asia/Omsk",region:"Omsk"},{zone:"Asia/Krasnoyarsk",region:"Krasnoyarsk"},
+        {zone:"Asia/Irkutsk",region:"Irkutsk"},{zone:"Asia/Yakutsk",region:"Yakutsk"},
+        {zone:"Asia/Vladivostok",region:"Vladivostok"},{zone:"Asia/Magadan",region:"Magadan"},
+        {zone:"Asia/Kamchatka",region:"Kamchatka"} ]},
+    { country:"Australia", zones:[
+        {zone:"Australia/Perth",region:"Western"},{zone:"Australia/Adelaide",region:"Central"},
+        {zone:"Australia/Darwin",region:"Northern Territory"},{zone:"Australia/Brisbane",region:"Queensland"},
+        {zone:"Australia/Sydney",region:"Eastern"},{zone:"Australia/Hobart",region:"Tasmania"} ]},
+    { country:"Brazil", zones:[
+        {zone:"America/Noronha",region:"Fernando de Noronha"},{zone:"America/Sao_Paulo",region:"most of Brazil"},
+        {zone:"America/Manaus",region:"Amazonas"},{zone:"America/Rio_Branco",region:"Acre"} ]},
+    { country:"Mexico", zones:[
+        {zone:"America/Cancun",region:"Southeast"},{zone:"America/Mexico_City",region:"Central"},
+        {zone:"America/Hermosillo",region:"Sonora"},{zone:"America/Tijuana",region:"Baja California"} ]},
+    { country:"Indonesia", zones:[
+        {zone:"Asia/Jakarta",region:"Western"},{zone:"Asia/Makassar",region:"Central"},
+        {zone:"Asia/Jayapura",region:"Eastern"} ]}
+  ];
+
+  var MULTI_ZONE = {
+    US: function(lat, lon){
+      if(lat > 55 && lon < -130) return "America/Anchorage";
+      if(lat < 23 && lon > -161 && lon < -154) return "Pacific/Honolulu";
+      if(lon >= -87) return "America/New_York";
+      if(lon >= -101) return "America/Chicago";
+      if(lon >= -115) return "America/Denver";
+      return "America/Los_Angeles";
+    },
+    CA: function(lat, lon){
+      if(lon >= -59) return lat < 53 ? "America/St_Johns" : "America/Halifax";
+      if(lon >= -68) return "America/Halifax";
+      if(lon >= -90) return "America/Toronto";
+      if(lon >= -102) return "America/Winnipeg";
+      if(lon >= -120) return "America/Edmonton";
+      return "America/Vancouver";
+    },
+    RU: function(lat, lon){
+      if(lon < 40) return "Europe/Moscow";
+      if(lon < 60) return "Asia/Yekaterinburg";
+      if(lon < 75) return "Asia/Omsk";
+      if(lon < 90) return "Asia/Krasnoyarsk";
+      if(lon < 105) return "Asia/Irkutsk";
+      if(lon < 120) return "Asia/Yakutsk";
+      if(lon < 135) return "Asia/Vladivostok";
+      if(lon < 150) return "Asia/Magadan";
+      return "Asia/Kamchatka";
+    },
+    AU: function(lat, lon){
+      if(lon < 129) return "Australia/Perth";
+      if(lon < 138) return lat < -26 ? "Australia/Adelaide" : "Australia/Darwin";
+      if(lat < -39) return "Australia/Hobart";
+      if(lat > -29) return "Australia/Brisbane";
+      return "Australia/Sydney";
+    },
+    BR: function(lat, lon){
+      if(lon >= -38) return "America/Noronha";
+      if(lon <= -68) return "America/Rio_Branco";
+      if(lon <= -60) return "America/Manaus";
+      return "America/Sao_Paulo";
+    },
+    MX: function(lat, lon){
+      if(lon < -114) return "America/Tijuana";
+      if(lon < -109) return "America/Hermosillo";
+      if(lon > -90) return "America/Cancun";
+      return "America/Mexico_City";
+    },
+    ID: function(lat, lon){
+      if(lon < 115) return "Asia/Jakarta";
+      if(lon < 135) return "Asia/Makassar";
+      return "Asia/Jayapura";
+    },
+    CD: function(lat, lon){ return lon < 24 ? "Africa/Kinshasa" : "Africa/Lubumbashi"; },
+    MN: function(lat, lon){ return lon < 98 ? "Asia/Hovd" : "Asia/Ulaanbaatar"; }
+  };
+
+  function estimateTimezone(lat, lon, country){
+    if(country && MULTI_ZONE[country] && isFinite(lat) && isFinite(lon)) return MULTI_ZONE[country](lat, lon);
+    if(country && COUNTRY_TZ[country]) return COUNTRY_TZ[country];
+    return null;
+  }
+
+  var TZ_INDEX = [];
+  function buildTimezoneIndex(){
+    var all;
+    try{ all = (typeof Intl.supportedValuesOf === "function") ? Intl.supportedValuesOf("timeZone") : FALLBACK_TZ; }
+    catch(e){ all = FALLBACK_TZ; }
+
+    var byZone = {};
+    all.forEach(function(z){
+      var parts = z.split("/");
+      byZone[z] = { zone:z, city: parts[parts.length-1].replace(/_/g," "), country:null, region:null };
+    });
+    Object.keys(COUNTRY_TZ).forEach(function(code){
+      var z = COUNTRY_TZ[code], name = COUNTRY_NAMES[code];
+      if(byZone[z] && name) byZone[z].country = name;
+    });
+    MULTI_ZONE_LABELS.forEach(function(entry){
+      entry.zones.forEach(function(zi){
+        if(byZone[zi.zone]){ byZone[zi.zone].country = entry.country; byZone[zi.zone].region = zi.region; }
+      });
+    });
+    TZ_INDEX = Object.keys(byZone).map(function(k){
+      var e = byZone[k];
+      return {
+        zone: e.zone,
+        label: e.city + (e.region ? " (" + e.region + ")" : "") + (e.country ? ", " + e.country : ""),
+        search: (e.city + " " + e.zone + " " + (e.country||"") + " " + (e.region||"")).toLowerCase()
+      };
+    });
+  }
+
+  function searchTimezones(q){
+    q = q.trim().toLowerCase();
+    if(!q) return [];
+    var starts = [], contains = [];
+    TZ_INDEX.forEach(function(e){
+      if(e.search.indexOf(q) === -1) return;
+      var isWordStart = e.search.split(/[\s\/]+/).some(function(w){ return w.indexOf(q) === 0; });
+      (isWordStart ? starts : contains).push(e);
+    });
+    return starts.concat(contains).slice(0, 8);
+  }
+
+  function hideTzSuggest(){ el.tzSuggest.classList.remove("show"); el.tzSuggest.innerHTML = ""; }
+
+  function renderTzSuggestions(query){
+    el.tzSuggest.innerHTML = "";
+    if(!query.trim()){ hideTzSuggest(); return; }
+    var matches = searchTimezones(query);
+    if(!matches.length){
+      var d = document.createElement("div");
+      d.className = "empty";
+      d.textContent = "No match \u2014 an exact zone id such as Asia/Tokyo also works";
+      el.tzSuggest.appendChild(d);
+    } else {
+      matches.forEach(function(item){
+        var row = document.createElement("div");
+        row.className = "tzOpt";
+        row.textContent = item.label + " \u2014 " + item.zone;
+        row.addEventListener("pointerdown", function(e){
+          e.preventDefault(); el.f_tz.value = item.zone; hideTzSuggest();
+        });
+        el.tzSuggest.appendChild(row);
+      });
+    }
+    el.tzSuggest.classList.add("show");
+  }
+
+  el.f_tz.addEventListener("input", function(){ renderTzSuggestions(el.f_tz.value); });
+  el.f_tz.addEventListener("focus", function(){ if(el.f_tz.value.trim()) renderTzSuggestions(el.f_tz.value); });
+  el.f_tz.addEventListener("blur", function(){ setTimeout(hideTzSuggest, 150); });
+  el.tzClearBtn.addEventListener("click", function(){
+    el.f_tz.value = ""; hideTzSuggest(); el.f_tz.focus();
+  });
+
+  // ================= PAGE LOOKUP =================
+  // A browser is not allowed to read another website's page directly, so this
+  // goes through public relay services that fetch the page and hand back its
+  // text. They are free, shared, and sometimes slow, rate-limited or down.
+  // When they all fail, the manual path (Copy Image Address) still works.
+  var RELAYS = [
+    function(u){ return "https://api.allorigins.win/raw?url=" + encodeURIComponent(u); },
+    function(u){ return "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(u); },
+    function(u){ return "https://r.jina.ai/" + u; }
+  ];
+
+  function fetchPageHtml(url){
+    var i = 0;
+    function attempt(){
+      if(i >= RELAYS.length) return Promise.resolve(null);
+      var relay = RELAYS[i++];
+      return fetchTimeout(relay(url), 14000).then(function(r){
+        if(!r.ok) return attempt();
+        return r.text().then(function(t){
+          return (t && t.length > 150) ? t : attempt();
+        });
+      }).catch(function(){ return attempt(); });
+    }
+    return attempt();
+  }
+
+  var JUNK_IMG = /logo|icon|sprite|avatar|banner|button|pixel|spacer|favicon|badge|flag|arrow|placeholder/i;
+
+  function extractCandidates(html, baseUrl){
+    var found = [], seen = {};
+    function add(raw, kind, note, score){
+      if(!raw) return;
+      raw = raw.replace(/&amp;/g, "&").trim();
+      var u = absUrl(raw, baseUrl);
+      if(!u || !/^https?:/i.test(u) || seen[u]) return;
+      seen[u] = 1;
+      found.push({url:u, kind:kind, note:note, score:score});
+    }
+    var m, re;
+
+    // HLS anywhere in the page source, including inside scripts
+    re = /https?:\/\/[^\s"'<>\\)]+?\.m3u8[^\s"'<>\\)]*/gi;
+    while((m = re.exec(html))) add(m[0], "video", "Live video stream (HLS)", 0);
+    re = /["'642]([^"'\s]+\.m3u8[^"'\s]*)["']/gi;
+    while((m = re.exec(html))) add(m[1], "video", "Live video stream (HLS)", 0);
+
+    // declared video in the page's own metadata
+    re = /<meta[^>]+(?:property|name)=["']og:video(?::url|:secure_url)?["'][^>]*content=["']([^"']+)["']/gi;
+    while((m = re.exec(html))) add(m[1], "video", "Video declared by the page", 1);
+    re = /<meta[^>]*content=["']([^"']+)["'][^>]+(?:property|name)=["']og:video[^"']*["']/gi;
+    while((m = re.exec(html))) add(m[1], "video", "Video declared by the page", 1);
+
+    // video / source elements
+    re = /<(?:video|source)[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
+    while((m = re.exec(html))) add(m[1], "video", "Video on the page", 2);
+
+    // plain video files
+    re = /https?:\/\/[^\s"'<>\\)]+?\.(?:mp4|webm)[^\s"'<>\\)]*/gi;
+    while((m = re.exec(html))) add(m[0], "video", "Video file", 3);
+
+    // YouTube anywhere
+    re = /(?:youtube(?:-nocookie)?\.com\/(?:embed|live)\/|youtu\.be\/|youtube\.com\/watch\?v=)([\w-]{8,})/gi;
+    while((m = re.exec(html))) add("https://www.youtube.com/watch?v=" + m[1], "youtube", "YouTube stream on the page", 4);
+
+    // images that look like a camera frame
+    re = /<img[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
+    while((m = re.exec(html))){
+      var iu = m[1];
+      if(JUNK_IMG.test(iu)) continue;
+      if(/\.(jpe?g|png|webp)(\?|$)/i.test(iu) || /cam|webcam|live|snapshot|current|latest|image\.php|jpg\.php/i.test(iu)){
+        var looksLikeCam = /cam|webcam|live|snapshot|current|latest/i.test(iu);
+        add(iu, "image", looksLikeCam ? "Camera image on the page" : "Image on the page", looksLikeCam ? 5 : 7);
+      }
+    }
+    re = /<meta[^>]+(?:property|name)=["']og:image[^"']*["'][^>]*content=["']([^"']+)["']/gi;
+    while((m = re.exec(html))) add(m[1], "image", "Image declared by the page", 6);
+
+    // markdown-style image links (some relays return markdown, not HTML)
+    re = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/gi;
+    while((m = re.exec(html))){
+      if(JUNK_IMG.test(m[1])) continue;
+      add(m[1], "image", "Image on the page", 7);
+    }
+
+    // last resort: an embedded player from another site
+    re = /<iframe[^>]+src=["']([^"']+)["']/gi;
+    while((m = re.exec(html))){
+      var fu = m[1];
+      if(/youtube|youtu\.be/i.test(fu)) continue;
+      if(/facebook|twitter|\/gtm|google|doubleclick|analytics|consent|ads?\./i.test(fu)) continue;
+      add(fu, "iframe", "Embedded player (may refuse to load)", 8);
+    }
+
+    found.sort(function(a,b){ return a.score - b.score; });
+    return found.slice(0, 14);
+  }
+
+  function extractTitle(html){
+    var m = html.match(/<meta[^>]+(?:property|name)=["']og:title["'][^>]*content=["']([^"']+)["']/i);
+    if(m) return m[1].trim();
+    m = html.match(/<title[^>]*>([\s\S]{1,200}?)<\/title>/i);
+    if(m) return m[1].replace(/\s+/g," ").trim();
+    m = html.match(/^Title:\s*(.+)$/mi);   // jina markdown header
+    if(m) return m[1].trim();
+    return null;
+  }
+
+  function geocode(query){
+    return fetchTimeout("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&q=" + encodeURIComponent(query), 9000)
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(arr){
+        if(!arr || !arr.length) return null;
+        var it = arr[0];
+        return {
+          lat: parseFloat(it.lat), lon: parseFloat(it.lon),
+          place: (it.display_name||"").split(",").map(function(s){return s.trim();}).slice(0,3).join(", "),
+          country: (it.address && it.address.country_code) ? it.address.country_code.toUpperCase() : null
+        };
+      }).catch(function(){ return null; });
+  }
+
+  function setStatus(msg, cls){
+    el.fetchStatus.className = "status" + (cls ? " " + cls : "");
+    el.fetchStatus.textContent = msg;
+  }
+
+  // ---------------- candidate list + preview ----------------
+  function clearPreview(){
+    el.previewBox.classList.remove("show");
+    el.previewBox.innerHTML = "";
+  }
+
+  function previewCandidate(cand){
+    chosenMedia = { url: cand.url, kind: cand.kind };
+    el.f_type.value = cand.kind;
+    el.previewBox.innerHTML = "";
+    el.previewBox.classList.add("show");
+
+    var st = document.createElement("div");
+    st.className = "pvStatus";
+    st.textContent = "Trying this one\u2026";
+    el.previewBox.appendChild(st);
+
+    if(cand.kind === "image"){
+      var img = document.createElement("img");
+      img.onload = function(){ st.className = "pvStatus ok"; st.textContent = "This image loads. It will be used."; };
+      img.onerror = function(){ st.className = "pvStatus err"; st.textContent = "This image will not load in the app \u2014 try another one below."; };
+      img.src = bust(cand.url);
+      el.previewBox.appendChild(img);
+    } else if(cand.kind === "video"){
+      var v = document.createElement("video");
+      v.muted = true; v.autoplay = true; v.playsInline = true; v.loop = true;
+      v.onloadeddata = function(){ st.className = "pvStatus ok"; st.textContent = "This video plays. It will be used."; };
+      v.onerror = function(){ st.className = "pvStatus err"; st.textContent = "This video will not play in the app \u2014 try another one below."; };
+      v.src = cand.url;
+      el.previewBox.appendChild(v);
+      v.play().catch(function(){});
+    } else if(cand.kind === "youtube"){
+      st.className = "pvStatus ok";
+      st.textContent = "YouTube stream selected.";
+    } else {
+      st.textContent = "Embedded players cannot be checked in advance. Save it and see whether it appears.";
+    }
+  }
+
+  function renderCandidates(list){
+    el.candList.innerHTML = "";
+    if(!list || !list.length) return;
+    var head = document.createElement("h3");
+    head.textContent = "Found on that page \u2014 tap one to use it";
+    head.style.margin = "18px 0 6px";
+    el.candList.appendChild(head);
+
+    list.forEach(function(cand){
+      var row = document.createElement("div");
+      row.className = "cand";
+      row.innerHTML = '<div class="cmeta"><div class="ck"></div><div class="cu"></div></div>' +
+                      '<button class="smallbtn">Use</button>';
+      row.querySelector(".ck").textContent = cand.note;
+      row.querySelector(".cu").textContent = cand.url;
+      function pick(){
+        Array.prototype.forEach.call(el.candList.querySelectorAll(".cand"), function(r){ r.classList.remove("chosen"); });
+        row.classList.add("chosen");
+        previewCandidate(cand);
+      }
+      row.querySelector("button").addEventListener("click", pick);
+      row.addEventListener("click", function(e){ if(e.target.tagName !== "BUTTON") pick(); });
+      el.candList.appendChild(row);
+    });
+  }
+
+  function fillDetailsFrom(title){
+    if(title && !el.f_name.value.trim()) el.f_name.value = title.slice(0, 80);
+    if(!title) return Promise.resolve(false);
+    return geocode(title).then(function(geo){
+      if(!geo) return false;
+      if(geo.place && !el.f_place.value.trim()) el.f_place.value = geo.place;
+      var tz = estimateTimezone(geo.lat, geo.lon, geo.country);
+      if(tz && !el.f_tz.value.trim()) el.f_tz.value = tz;
+      return true;
+    });
+  }
+
+  function runFind(){
+    var url = el.f_url.value.trim();
+    if(!url){ setStatus("Paste a page address first.", "err"); return; }
+    el.candList.innerHTML = ""; clearPreview(); chosenMedia = null;
+
+    // Already a direct media address? Don't waste a lookup.
+    var direct = guessKind(url);
+    if(direct === "image" || direct === "video"){
+      setStatus("That is already a direct " + (direct === "image" ? "image" : "video") + " address. Checking it\u2026", "busy");
+      previewCandidate({url:url, kind:direct, note:"Direct address"});
+      if(direct === "youtube") return;
+    }
+
+    setStatus("Reading that page\u2026 this can take 10\u201320 seconds.", "busy");
+    el.findBtn.disabled = true;
+
+    fetchPageHtml(url).then(function(html){
+      el.findBtn.disabled = false;
+      if(!html){
+        setStatus("Could not read that page. The lookup services may be busy, or the site blocks them. Use the manual method described below.", "err");
+        return;
+      }
+      var title = extractTitle(html);
+      var cands = extractCandidates(html, url);
+      renderCandidates(cands);
+
+      if(cands.length){
+        setStatus("Found " + cands.length + " possible source" + (cands.length>1?"s":"") + ". Tap one to check it.", "ok");
+        var best = cands[0];
+        Array.prototype.forEach.call(el.candList.querySelectorAll(".cand"), function(r,i){ if(i===0) r.classList.add("chosen"); });
+        previewCandidate(best);
+      } else {
+        setStatus("Read the page but found no camera image or video on it. Use the manual method below.", "err");
+      }
+      return fillDetailsFrom(title);
+    }).catch(function(){
+      el.findBtn.disabled = false;
+      setStatus("Lookup failed. Use the manual method below.", "err");
+    });
+  }
+
+  function runUseDirect(){
+    var url = el.f_url.value.trim();
+    if(!url){ setStatus("Paste an address first.", "err"); return; }
+    el.candList.innerHTML = "";
+    var kind = guessKind(url);
+    previewCandidate({url:url, kind:kind, note:"Direct address"});
+    setStatus("Using this address as given, treated as: " + kind + ". Change that below if it is wrong.", "ok");
+    if(kind === "youtube"){
+      fetchTimeout("https://www.youtube.com/oembed?url=" + encodeURIComponent(url) + "&format=json", 7000)
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){ if(j && j.title) return fillDetailsFrom(j.title); })
+        .catch(function(){});
+    }
+  }
+
+  el.findBtn.addEventListener("click", runFind);
+  el.useDirectBtn.addEventListener("click", runUseDirect);
+
+  // ================= MEDIA RENDERING =================
+  function clearMedia(){
+    if(imageRefreshTimer){ clearInterval(imageRefreshTimer); imageRefreshTimer = null; }
+    el.mediaLayer.innerHTML = "";
+  }
+
+  function showWarn(msg){
+    if(!msg){ el.ovWarn.style.display = "none"; el.ovWarn.textContent = ""; return; }
+    el.ovWarn.style.display = "block";
+    el.ovWarn.textContent = msg;
+  }
+
+  function renderMedia(cam){
+    clearMedia();
+    showWarn("");
+    var url = cam.url;
+    var type = (cam.type && cam.type !== "auto") ? cam.type : guessKind(url);
+
+    if(type === "youtube"){
+      var id = youTubeId(url);
+      var iframe = document.createElement("iframe");
+      iframe.src = id
+        ? "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0&loop=1&playlist=" + id
+        : url;
+      iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+      el.mediaLayer.appendChild(iframe);
+
+    } else if(type === "video"){
+      var video = document.createElement("video");
+      video.muted = true; video.autoplay = true; video.playsInline = true; video.loop = true;
+      video.onerror = function(){ showWarn("This stream is not loading right now."); };
+      video.src = url;
+      el.mediaLayer.appendChild(video);
+      video.play().catch(function(){});
+
+    } else if(type === "image"){
+      var every = Math.max(2, parseInt(cam.refresh, 10) || 15) * 1000;
+      var img = document.createElement("img");
+      img.onerror = function(){ showWarn("This image is not loading right now."); };
+      img.onload = function(){ showWarn(""); };
+      img.src = bust(url);
+      el.mediaLayer.appendChild(img);
+      imageRefreshTimer = setInterval(function(){ img.src = bust(url); }, every);
+
+    } else {
+      var gen = document.createElement("iframe");
+      gen.src = url;
+      gen.allow = "autoplay; encrypted-media; picture-in-picture";
+      el.mediaLayer.appendChild(gen);
+      showWarn("Embedded page \u2014 many sites refuse to be shown this way.");
+    }
+  }
+
+  function renderCam(cam){
+    if(cam.reresolve && cam.pageUrl){
+      showWarn("Looking up a fresh link\u2026");
+      fetchPageHtml(cam.pageUrl).then(function(html){
+        if(!html){ renderMedia(cam); return; }
+        var cands = extractCandidates(html, cam.pageUrl).filter(function(c){ return c.kind === (cam.type === "auto" ? c.kind : cam.type); });
+        if(cands.length) renderMedia({url: cands[0].url, type: cam.type, refresh: cam.refresh});
+        else renderMedia(cam);
+      }).catch(function(){ renderMedia(cam); });
+    } else {
+      renderMedia(cam);
+    }
+  }
+
+  // ================= OVERLAY / CLOCK =================
+  function updateClock(){
+    var cam = cams[idx];
+    if(!cam) return;
+    var now = new Date(), timeStr, dateStr;
+    try{
+      timeStr = new Intl.DateTimeFormat("en-US", {timeZone: cam.tz, hour:"numeric", minute:"2-digit", second:"2-digit", hour12:true}).format(now);
+      dateStr = new Intl.DateTimeFormat("en-US", {timeZone: cam.tz, weekday:"short", month:"short", day:"numeric"}).format(now);
+    }catch(e){ timeStr = "--:--:--"; dateStr = "unknown time zone"; }
+    el.ovTime.textContent = timeStr;
+    el.ovDate.textContent = dateStr;
+  }
+
+  function renderOverlay(cam){
+    el.ovPlace.textContent = cam.name;
+    el.ovRegion.textContent = cam.place || "";
+    el.ovCount.textContent = (idx + 1) + " / " + cams.length;
+    updateClock();
+  }
+
+  function startProgress(seconds){
+    el.progress.style.transition = "none";
+    el.progress.style.width = "0%";
+    void el.progress.offsetWidth;
+    el.progress.style.transition = "width " + seconds + "s linear";
+    el.progress.style.width = "100%";
+  }
+  function freezeProgress(){
+    var w = getComputedStyle(el.progress).width;
+    el.progress.style.transition = "none";
+    el.progress.style.width = w;
+  }
+
+  function showCam(i){
+    if(cams.length === 0) return;
+    idx = ((i % cams.length) + cams.length) % cams.length;
+    var cam = cams[idx];
+    renderCam(cam);
+    renderOverlay(cam);
+    if(!paused){
+      var secs = Math.max(1, cam.minutes || 5) * 60;
+      startProgress(secs);
+      clearTimeout(rotationTimer);
+      rotationTimer = setTimeout(function(){ showCam(idx + 1); }, secs * 1000);
+    }
+  }
+
+  function refreshRotationUI(){
+    if(cams.length === 0){
+      el.empty.classList.remove("hidden");
+      el.overlay.style.display = "none";
+      clearMedia(); clearTimeout(rotationTimer);
+      return;
+    }
+    el.empty.classList.add("hidden");
+    el.overlay.style.display = "block";
+    if(idx >= cams.length) idx = 0;
+    showCam(idx);
+  }
+
+  // ================= CONTROLS =================
+  function revealChrome(ms){
+    el.chrome.classList.add("show");
+    clearTimeout(chromeHideTimer);
+    chromeHideTimer = setTimeout(function(){
+      el.chrome.classList.remove("show");
+      el.hint.classList.remove("show");
+    }, ms || 5000);
+  }
+  el.tapCatcher.addEventListener("click", function(){ revealChrome(); });
+
+  document.getElementById("pauseBtn").addEventListener("click", function(){
+    paused = !paused;
+    this.textContent = paused ? "\u25B6" : "\u2503\u2503";
+    if(paused){ clearTimeout(rotationTimer); freezeProgress(); }
+    else{ showCam(idx); }
+    revealChrome();
+  });
+  document.getElementById("skipBtn").addEventListener("click", function(){ showCam(idx + 1); revealChrome(); });
+
+  function openPanel(){ el.panel.classList.add("open"); renderCamList(); }
+  function closePanel(){ el.panel.classList.remove("open"); }
+  document.getElementById("settingsBtn").addEventListener("click", openPanel);
+  document.getElementById("emptyAddBtn").addEventListener("click", function(){ resetForm(); openPanel(); });
+  document.getElementById("addBtn").addEventListener("click", function(){ resetForm(); openPanel(); });
+  document.getElementById("closePanelBtn").addEventListener("click", closePanel);
+
+  function resetForm(){
+    editingId = null; chosenMedia = null;
+    el.formTitle.textContent = "Add a camera";
+    el.saveBtn.textContent = "Add camera";
+    el.cancelEditBtn.style.display = "none";
+    el.f_name.value = ""; el.f_place.value = ""; el.f_url.value = "";
+    el.f_type.value = "auto"; el.f_minutes.value = "5"; el.f_refresh.value = "15";
+    el.f_tz.value = ""; el.f_reresolve.checked = false;
+    el.formErr.textContent = ""; setStatus("", "");
+    el.candList.innerHTML = ""; clearPreview(); hideTzSuggest();
+  }
+  document.getElementById("cancelEditBtn").addEventListener("click", resetForm);
+
+  function renderCamList(){
+    el.camCount.textContent = cams.length;
+    el.camList.innerHTML = "";
+    cams.forEach(function(cam, i){
+      var row = document.createElement("div");
+      row.className = "camrow";
+      row.innerHTML =
+        '<div class="meta"><div class="n"></div><div class="p"></div></div>' +
+        '<div class="actions">' +
+          '<button class="smallbtn" data-act="up">&#8593;</button>' +
+          '<button class="smallbtn" data-act="down">&#8595;</button>' +
+          '<button class="smallbtn" data-act="edit">Edit</button>' +
+          '<button class="smallbtn" data-act="del" style="color:var(--danger);">Delete</button>' +
+        '</div>';
+      row.querySelector(".n").textContent = cam.name;
+      row.querySelector(".p").textContent = (cam.place ? cam.place + " \u2014 " : "") + cam.tz + " \u2014 " + cam.minutes + " min";
+      row.querySelector('[data-act="up"]').addEventListener("click", function(){ moveCam(i, -1); });
+      row.querySelector('[data-act="down"]').addEventListener("click", function(){ moveCam(i, 1); });
+      row.querySelector('[data-act="edit"]').addEventListener("click", function(){ editCam(cam.id); });
+      row.querySelector('[data-act="del"]').addEventListener("click", function(){ deleteCam(cam.id); });
+      el.camList.appendChild(row);
+    });
+  }
+
+  function moveCam(i, dir){
+    var j = i + dir;
+    if(j < 0 || j >= cams.length) return;
+    var tmp = cams[i]; cams[i] = cams[j]; cams[j] = tmp;
+    save(); renderCamList();
+  }
+
+  function editCam(id){
+    var cam = cams.find(function(c){ return c.id === id; });
+    if(!cam) return;
+    editingId = id;
+    chosenMedia = { url: cam.url, kind: cam.type };
+    el.formTitle.textContent = "Edit camera";
+    el.saveBtn.textContent = "Save changes";
+    el.cancelEditBtn.style.display = "inline-block";
+    el.f_name.value = cam.name; el.f_place.value = cam.place || "";
+    el.f_url.value = cam.pageUrl || cam.url;
+    el.f_type.value = cam.type; el.f_minutes.value = cam.minutes;
+    el.f_refresh.value = cam.refresh || 15;
+    el.f_tz.value = cam.tz; el.f_reresolve.checked = !!cam.reresolve;
+    el.formErr.textContent = ""; setStatus("Currently showing: " + cam.url, "");
+    el.candList.innerHTML = ""; clearPreview(); hideTzSuggest();
+    el.panel.scrollTop = 0;
+  }
+
+  function deleteCam(id){
+    cams = cams.filter(function(c){ return c.id !== id; });
+    save(); renderCamList(); refreshRotationUI();
+  }
+
+  document.getElementById("saveBtn").addEventListener("click", function(){
+    var name = el.f_name.value.trim();
+    var place = el.f_place.value.trim();
+    var pageUrl = el.f_url.value.trim();
+    var type = el.f_type.value;
+    var minutes = parseInt(el.f_minutes.value, 10);
+    var refresh = parseInt(el.f_refresh.value, 10);
+    var tz = el.f_tz.value.trim();
+    var mediaUrl = chosenMedia ? chosenMedia.url : pageUrl;
+
+    if(!pageUrl){ el.formErr.textContent = "An address is required."; return; }
+    if(!mediaUrl){ el.formErr.textContent = "Choose a source above, or press \u201cUse this address directly\u201d."; return; }
+    if(!name){ el.formErr.textContent = "Name is required."; return; }
+    if(!tz || !validTimeZone(tz)){ el.formErr.textContent = "Pick a time zone \u2014 type a city or country in that field."; return; }
+    if(!minutes || minutes < 1) minutes = 5;
+    if(!refresh || refresh < 2) refresh = 15;
+    el.formErr.textContent = "";
+
+    var rec = {
+      name:name, place:place, pageUrl:pageUrl, url:mediaUrl, type:type,
+      minutes:minutes, refresh:refresh, tz:tz, reresolve: el.f_reresolve.checked
+    };
+
+    if(editingId){
+      var cam = cams.find(function(c){ return c.id === editingId; });
+      Object.keys(rec).forEach(function(k){ cam[k] = rec[k]; });
+    } else {
+      rec.id = uid();
+      cams.push(rec);
+    }
+    save(); resetForm(); renderCamList(); refreshRotationUI();
+  });
+
+  // ---------------- wake lock ----------------
+  function requestWakeLock(){
+    if("wakeLock" in navigator){
+      navigator.wakeLock.request("screen").catch(function(){});
+    }
+  }
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "visible") requestWakeLock();
+  });
+
+  // ---------------- boot ----------------
+  load();
+  buildTimezoneIndex();
+  refreshRotationUI();
+  setInterval(updateClock, 1000);
+  requestWakeLock();
+  if(cams.length){ el.hint.classList.add("show"); revealChrome(6000); }
+
+})();
+</script>
+</body>
+</html>
